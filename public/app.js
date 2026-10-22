@@ -1,6 +1,6 @@
 import { processingMarkup, showProcessing } from './processing.js';
 import { getMacroPlan, getGoalProjection, getCalorieLimits, hasMacros, summarizeMeals } from './nutrition.js?v=20261019-deficit-1200-1';
-import { historyChart } from './history.js?v=20261022-maintenance-2';
+import { historyChart } from './history.js?v=20261022-maintenance-dashed-1';
 import { createVoiceInput } from './voice.js?v=20261019-repeat-meal-2';
 import { createUserCache, isCancelledError } from './cache.js?v=20261020-week-allocation-1';
 const root = document.querySelector('#app');

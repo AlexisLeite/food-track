@@ -24,7 +24,7 @@ export function historyChart(history, metric) {
   };
   const grid = Array.from({ length: 5 }, (_, i) => { const value = step * i; return `<line x1="${left}" x2="${width-right}" y1="${y(value)}" y2="${y(value)}" class="chart-grid"/><text x="${left-8}" y="${y(value)+4}" text-anchor="end">${fmt(value)}</text>`; }).join('');
   const ticks = [...new Set([0, Math.floor((days.length-1)/2), days.length-1])].map(i => `<text x="${x(i)}" y="${height-10}" text-anchor="${i === 0 ? 'start' : i === days.length-1 ? 'end' : 'middle'}">${shortDate(days[i].date)}</text>`).join('');
-  const points = days.map((day, i) => ['target', 'actual'].map(source => {
+  const points = days.map((day, i) => ['actual'].map(source => {
     const value = day[source]?.[metric]; if (typeof value !== 'number') return '';
     return `<circle cx="${x(i)}" cy="${y(value)}" r="${source === 'actual' ? 3.5 : 2.5}" class="chart-point-${source}"><title>${shortDate(day.date)}: ${sourceLabels[source]} ${fmt(value)} ${unit}</title></circle>`;
   }).join('')).join('');

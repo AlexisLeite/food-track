@@ -57,4 +57,4 @@ form[data-processing]>:not(.processing-state){display:none!important}
 
 .input-surface{display:grid;min-width:0}.input-surface>[data-input-options],.input-surface>[data-text-editor]{grid-area:1/1;align-self:start;min-width:0}.input-surface.is-switching{overflow:hidden}
 
-.chart-maintenance{stroke:#237b4b;stroke-width:2;fill:none}.chart-point-maintenance{fill:#fff;stroke:#237b4b;stroke-width:1.5}.chart-legend .legend-maintenance{border-color:#237b4b}.chart-legend{flex-wrap:wrap;gap:10px 20px}
+.chart-maintenance{stroke:#237b4b;stroke-width:1.5;stroke-dasharray:5 4;fill:none}.chart-point-maintenance{fill:#fff;stroke:#237b4b;stroke-width:1.5}.chart-legend .legend-maintenance{border-color:#237b4b;border-top-style:dashed}.chart-legend{flex-wrap:wrap;gap:10px 20px}
