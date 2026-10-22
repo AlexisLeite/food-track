@@ -1,0 +1,18 @@
+[Unit]
+Description=Comida - diario de calorias
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/repos/foodtrack
+EnvironmentFile=/repos/foodtrack/.env
+Environment=HOME=/root
+ExecStart=/usr/bin/node /repos/foodtrack/server/index.js
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
