@@ -1,3 +1,4 @@
+import { runAssistant, validateMessages } from './assistant.js';
 import { migrateCodexAccess } from './codex-access.js';
 import { captureDiagnosticAudio, recordAudioResult } from './audio-capture.js';
 import { withRequestLog, logExecution } from './execution-log.js';
@@ -21,7 +22,7 @@ const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
-export async function createApplication({ dataDir = path.resolve(process.env.DATA_DIR || 'data'), analyzer = analyzePhoto, descriptionAnalyzer = analyzeDescription, origin = process.env.APP_ORIGIN || 'http://localhost:3086', secureCookies = process.env.COOKIE_SECURE === 'true' } = {}) {
+export async function createApplication({ dataDir = path.resolve(process.env.DATA_DIR || 'data'), analyzer = analyzePhoto, descriptionAnalyzer = analyzeDescription, assistantRunner = runAssistant, origin = process.env.APP_ORIGIN || 'http://localhost:3086', secureCookies = process.env.COOKIE_SECURE === 'true' } = {}) {
   await mkdir(path.join(dataDir, 'photos'), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(path.join(dataDir, 'foodtrack.sqlite'));
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
@@ -61,6 +62,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && (req.get('X-Foodtrack') !== '1' || (req.get('Origin') && req.get('Origin') !== origin))) return next(fail(403, 'Petición no permitida. Recargá la página.'));
     next();
   });
+  app.use('/api/chat', express.json({ limit: '192kb' }));
   app.use(express.json({ limit: '16kb' }));
   const attempts = new Map();
   const authLimit = (req, res, next) => {
@@ -78,7 +80,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     db.prepare('INSERT INTO sessions VALUES (?,?,?)').run(hash(token), userId, Date.now() + 30 * 86400000);
     res.cookie('foodtrack_session', token, { httpOnly: true, secure: secureCookies, sameSite: 'strict', maxAge: 30 * 86400000, path: '/' });
   }
-  const publicUser = user => ({ id: user.id, username: user.username, profile: user.profile ? withMacroPlan(JSON.parse(user.profile)) : null });
+  const publicUser = user => ({ id: user.id, username: user.username, canChat: user.enable_codex_extraction === 1, profile: user.profile ? withMacroPlan(JSON.parse(user.profile)) : null });
   const credentials = req => {
     const { username, password } = req.body || {};
     if (typeof username !== 'string' || !/^[a-zA-Z0-9_.-]{3,32}$/.test(username) || typeof password !== 'string' || password.length < 10 || password.length > 128) throw fail(400, 'Usá un usuario de 3 a 32 letras, números, puntos o guiones y una contraseña de 10 a 128 caracteres.');
@@ -92,7 +94,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     try { db.prepare('INSERT INTO users(id,username,password) VALUES (?,?,?)').run(id, username, encoded); }
     catch (e) { if (e.message.includes('UNIQUE')) throw fail(409, 'Ese usuario ya existe.'); throw e; }
     await newSession(res, id);
-    res.status(201).json({ user: { id, username, profile: null } });
+    res.status(201).json({ user: { id, username, canChat: false, profile: null } });
   });
   app.post('/api/login', authLimit, async (req, res) => {
     const { username, password } = credentials(req);
@@ -111,6 +113,43 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
   });
   app.get('/api/me', (req, res) => res.json({ user: publicUser(req.user), today: today() }));
   app.post('/api/logout', (req, res) => { db.prepare('DELETE FROM sessions WHERE token=?').run(req.sessionHash); res.clearCookie('foodtrack_session', { path: '/', secure: secureCookies, httpOnly: true, sameSite: 'strict' }); res.json({ ok: true }); });
+  const activeChats = new Set();
+  app.post('/api/chat', async (req, res) => {
+    if (req.user.enable_codex_extraction !== 1) throw fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.');
+    const messages = validateMessages(req.body?.messages);
+    if (activeChats.has(req.user.id) || activeChats.size >= 2) throw fail(429, 'El asistente está ocupado. Esperá un momento.');
+    const asOf = today(), start = dateOffset(asOf, -89);
+    const meals = db.prepare('SELECT date,selected FROM meals WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, asOf);
+    const goals = db.prepare('SELECT date,profile FROM profile_goals WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, asOf);
+    const profile = req.user.profile ? withMacroPlan(JSON.parse(req.user.profile)) : null;
+    const recent = meals.filter(meal => meal.date >= start);
+    const context = { today: asOf, profile, week: profile ? buildWeek({ date: asOf, asOf, meals, goals, profile }) : null,
+      history: buildHistory({ start, end: asOf, meals, goals, asOf }),
+      meals: recent.slice(-500).map(meal => ({ date: meal.date, food: meal.selected ? (({ name, portion, calories, protein, fat, carbs, details }) => ({ name, portion, calories, protein, fat, carbs, details }))(JSON.parse(meal.selected)) : null })),
+      coverage: { days: 90, totalMeals: recent.length, detailedMeals: Math.min(recent.length,500), note: 'Solo comidas confirmadas tienen nutrientes; detalle limitado a las últimas 500 comidas de 90 días. Los totales diarios incluyen todas.' } };
+    // IDs, credentials, photo paths and other users never enter the assistant context.
+    activeChats.add(req.user.id);
+    const controller = new AbortController();
+    res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+    res.flushHeaders();
+    const send = (type, data) => { if (!res.destroyed) res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`); };
+    const heartbeat = setInterval(() => { if (!res.destroyed) res.write(': keepalive\n\n'); }, 15000);
+    res.once('close', () => controller.abort());
+    try {
+      send('status', { text: 'Revisando tus registros…' });
+      const text = await assistantRunner({ context, messages, signal: controller.signal, onStatus: text => send('status', { text }), onText: text => {
+        if (db.prepare('SELECT enable_codex_extraction FROM users WHERE id=?').get(req.user.id)?.enable_codex_extraction !== 1) controller.abort();
+        else send('text', { text });
+      } });
+      // A permission revoked during a query must also block delivery.
+      const allowed = db.prepare('SELECT enable_codex_extraction FROM users WHERE id=?').get(req.user.id);
+      if (allowed?.enable_codex_extraction !== 1) throw new Error('No tenés autorización para usar esta función. Contactá con el administrador.');
+      send('message', { text });
+    } catch (error) {
+      logExecution('assistant_request', { phase: 'failed', userId: req.user.id, aborted: controller.signal.aborted });
+      if (!controller.signal.aborted) send('error', { text: error.message || 'El asistente no pudo responder.' });
+    } finally { clearInterval(heartbeat); activeChats.delete(req.user.id); res.end(); }
+  });
   app.put('/api/profile', (req, res) => {
     let profile;
     try { profile = calculateProfile(req.body); } catch (e) { throw fail(400, e.message); }

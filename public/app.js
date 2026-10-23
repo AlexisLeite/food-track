@@ -1,3 +1,4 @@
+import { createAssistant } from './assistant.js?v=20261023-chat-section-1';
 import { calorieProgressMarkup } from './calorie-progress.js?v=20261023-maintenance-bar-1';
 import './dock-offset.js?v=20261023-safari-offset-16';
 import { bindDaySwipe } from './swipe.js?v=20261023-day-swipe-1';
@@ -7,13 +8,18 @@ import { getMacroPlan, getGoalProjection, getCalorieLimits, hasMacros, summarize
 import { historyChart } from './history.js?v=20261023-red-only-1';
 import { createVoiceInput } from './voice.js?v=20261019-repeat-meal-2';
 import { createUserCache, isCancelledError } from './cache.js?v=20261020-week-allocation-1';
+const assistant = createAssistant({ notify: (message,error) => toast(message,error) });
 const root = document.querySelector('#app');
 const dock = document.querySelector('#app-dock');
 function syncDock() {
+  assistant.setUser(user);
   const navigation = root.querySelector('.bottom-nav');
   const dateSelector = root.querySelector('.date-nav');
   dock.replaceChildren(...[dateSelector, navigation].filter(Boolean));
   dock.hidden = !navigation;
+  const chatSlot = root.querySelector('#assistant-slot');
+  document.body.classList.toggle('chat-section-active', !!chatSlot);
+  assistant.mount(chatSlot);
 }
 const dialog = document.querySelector('#meal-dialog');
 const notice = document.querySelector('#notice');
@@ -124,9 +130,10 @@ function header(title = 'Comida') {
   const icons = {
     day: '<path d="M5 3v6a3 3 0 0 0 6 0V3M8 3v18M18 3c-2 3-3 6-3 9h5M20 3v18"/>',
     history: '<path d="M4 3v17h17M8 14l4-5 4 3 5-7"/>',
+    chat: '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>',
     settings: '<path d="M4 7h7M15 7h5M4 17h2M10 17h10"/><circle cx="13" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>'
   };
-  return `<header class="app-header"><h1 class="sr-only">${title}</h1><nav class="bottom-nav" aria-label="Secciones">${[['day', 'Comida'], ['history', 'Historia'], ['settings', 'Configuración']].map(([section, label]) => `<button type="button" class="bottom-nav-button" data-action="${section}" aria-label="${label}" title="${label}" ${view === section ? 'aria-current="page"' : ''} ${!user.profile && section !== 'settings' ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[section]}</svg></button>`).join('')}</nav></header>`;
+  return `<header class="app-header"><h1 class="sr-only">${title}</h1><nav class="bottom-nav${user.canChat ? ' has-assistant' : ''}" aria-label="Secciones">${[['day', 'Comida'], ['history', 'Historia'], ['settings', 'Configuración'], ...(user.canChat ? [['chat', 'Asistente']] : [])].map(([section, label]) => `<button type="button" class="bottom-nav-button" data-action="${section}" aria-label="${label}" title="${label}" ${view === section ? 'aria-current="page"' : ''} ${!user.profile && section !== 'settings' ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[section]}</svg></button>`).join('')}</nav></header>`;
 }
 function footer() { return `<footer class="footer"><small>${esc(user.username)}</small><button class="text" data-action="logout">Salir</button></footer>`; }
 function snapshotPanel(selector = '.view-panel') {
@@ -137,6 +144,7 @@ function snapshotPanel(selector = '.view-panel') {
   const source = root.querySelector(selector);
   if (!source) return null;
   const snapshot = source.cloneNode(true);
+  if (source.classList.contains('assistant-view')) snapshot.style.height = `${source.getBoundingClientRect().height}px`;
   snapshot.querySelectorAll('[id]').forEach(node => node.removeAttribute('id'));
   snapshot.querySelectorAll('button,input,select,textarea').forEach(node => { node.disabled = true; node.tabIndex = -1; });
   snapshot.setAttribute('aria-hidden', 'true'); snapshot.inert = true;
@@ -157,6 +165,7 @@ function animatePanel(snapshot, direction, selector = '.view-panel') {
 }
 async function switchView(next, date = currentDate) {
   if (!user?.profile && next !== 'settings') return;
+  if (next === 'chat' && !user?.canChat) return;
   const request = ++navigationRequest; ++dayRequest; pendingDate = null;
   const historyLoadRequest = next === 'history' ? ++historyRequest : null;
   const identity = user.id, previous = view, snapshot = snapshotPanel();
@@ -168,9 +177,9 @@ async function switchView(next, date = currentDate) {
   }
   if (next === 'history') { historyData = sectionCache.peek(`/api/history?days=${historyRange}&end=${historyEnd}`) || null; historyLoading = true; historyError = ''; }
   view = next; render();
-  const order = ['day', 'history', 'settings'];
+  const order = ['day', 'history', 'settings', 'chat'];
   const motion = previous !== next ? animatePanel(snapshot, order.indexOf(next) > order.indexOf(previous) ? 1 : -1) : Promise.resolve();
-  if (next === 'settings') return;
+  if (next === 'settings' || next === 'chat') return;
   root.setAttribute('aria-busy', 'true');
   try {
     const [data] = await Promise.all([api(next === 'day' ? `/api/day?date=${date}` : `/api/history?days=${historyRange}&end=${historyEnd}`), motion]);
@@ -226,7 +235,12 @@ function render() {
   if (!user) return renderAuth();
   if (view === 'settings' || !user.profile) return renderSettings();
   if (view === 'history') return renderHistory();
+  if (view === 'chat' && user.canChat) return renderAssistant();
   renderDay();
+}
+function renderAssistant() {
+  root.innerHTML = `${header('Asistente')}<div class="view-panel assistant-view"><div id="assistant-slot"></div></div>`;
+  syncDock();
 }
 function renderAuth() {
   root.innerHTML = `<section class="auth"><h1>Comida</h1><form id="auth-form" class="stack"><h2>${authMode === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}</h2><div><label for="username">Usuario</label><input id="username" name="username" autocomplete="username" required minlength="3" maxlength="32" pattern="[a-zA-Z0-9_.-]+" autocapitalize="none" spellcheck="false"></div><div><label for="password">Contraseña</label><input id="password" name="password" type="password" autocomplete="${authMode === 'login' ? 'current-password' : 'new-password'}" required minlength="10" maxlength="128">${authMode === 'register' ? '<small>Al menos 10 caracteres.</small>' : ''}</div><p class="error" id="auth-error" role="alert" hidden></p><button class="primary" type="submit">${authMode === 'login' ? 'Entrar' : 'Crear cuenta'}</button></form><div class="auth-switch"><button class="text" data-action="auth-switch">${authMode === 'login' ? 'Crear una cuenta' : 'Ya tengo una cuenta'}</button></div></section>`;
@@ -435,7 +449,8 @@ document.addEventListener('click', async e => {
     }
     switch (button.dataset.action) {
       case 'auth-switch': authMode = authMode === 'login' ? 'register' : 'login'; render(); break;
-      case 'day': case 'history': case 'settings': await switchView(button.dataset.action); break;
+      case 'day': case 'history': case 'chat':
+      case 'settings': await switchView(button.dataset.action); break;
       case 'back': await switchView('day'); break;
       case 'prev': case 'next': await changeDay(shiftDate(pendingDate || currentDate, button.dataset.action === 'prev' ? -1 : 1)); break;
       case 'retry-day': await changeDay(currentDate, true); break;
