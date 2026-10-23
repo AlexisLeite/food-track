@@ -5,6 +5,7 @@ import os
 import av
 import numpy as np
 from faster_whisper import WhisperModel
+from speech import transcribe_samples
 
 # Decode through PyAV explicitly to support its current API and bound duration.
 resampler = av.AudioResampler(format='s16', layout='mono', rate=16000)
@@ -24,6 +25,4 @@ if not parts:
     raise ValueError('Empty audio')
 audio = np.concatenate(parts).astype(np.float32) / 32768.0
 model = WhisperModel(os.environ.get('WHISPER_MODEL', 'small'), device='cpu', compute_type='int8', cpu_threads=4)
-segments, info = model.transcribe(audio, language='es', beam_size=3, vad_filter=True)
-text = ' '.join(segment.text.strip() for segment in segments).strip()
-print(json.dumps({'text': text}, ensure_ascii=False))
+print(json.dumps(transcribe_samples(model, audio), ensure_ascii=False))

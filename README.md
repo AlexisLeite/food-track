@@ -130,3 +130,13 @@ En el modal de una comida, «Repetir comida» permite elegir una fecha y copiar 
 El cambio entre los botones de grabar/escribir y el campo de texto usa una transición de 180 ms con desplazamiento, desvanecimiento y ajuste de altura, también al volver. Se conserva el borrador y se respeta reducir movimiento.
 
 Todas las evaluaciones de comida (foto, descripción, reevaluación y completado de macros) solicitan Fast mediante `service_tier="fast"` y `features.fast_mode=true` en cada ejecución de Codex, incluso al omitir la configuración global. Referencia: https://learn.chatgpt.com/docs/agent-configuration/speed.
+
+## Logs de ejecución
+
+Los registros JSON se consultan con `journalctl -u foodtrack.service -f -o cat`. Cada petición API tiene un `requestId`, también devuelto en `X-Request-ID`, para correlacionar recepción, finalización o desconexión con el análisis o la transcripción. Los procesos de Codex y Whisper registran inicio, PID, duración, código de salida, señal, timeout y resultado; Codex registra además el nivel Fast solicitado y la cantidad de opciones. Los logs no incluyen prompts, transcripciones, contenido de audio ni diagnósticos crudos del CLI. La consola del navegador muestra estado HTTP, tipo de respuesta e identificadores cuando recibe una respuesta ilegible, y la interfaz muestra un mensaje comprensible.
+
+Por pedido del usuario, todos los audios de todas las cuentas se conservan en `/mnt/scraper-db/food-track/audio`, en el disco secundario. Cada archivo tiene metadatos JSON con usuario, fecha, formato, identificador de petición, transcripción y resultado (o código de error si falla). La configuración persistente está en `data/audio-debug/persistent.json`, con `userId: "*"`. Las copias no se borran automáticamente; los temporales de transcripción sí. El directorio tiene permisos 0700 y los archivos 0600; no se sirven públicamente ni se incluyen en Git. El servicio espera al montaje del disco secundario antes de arrancar.
+
+La navegación entre Comida, Historia y Configuración usa una botonera fija inferior con íconos de línea. En Comida, el selector de fecha queda apilado inmediatamente encima. Deslizar hacia la izquierda avanza al día siguiente y hacia la derecha vuelve al anterior; se respetan scroll vertical, campos de formulario, modales y gestos desde el borde de Safari.
+
+«Repetir comida» abre el calendario nativo mediante un campo de fecha transparente superpuesto al botón, para que el toque móvil llegue directamente al control del navegador; no muestra un campo adicional ni un calendario custom.

@@ -1,5 +1,6 @@
 [Unit]
 Description=Comida - diario de calorias
+RequiresMountsFor=/mnt/scraper-db
 After=network-online.target
 Wants=network-online.target
 

@@ -1,3 +1,4 @@
+import { executionLogger } from './execution-log.js';
 import { hasMacros } from '../public/nutrition.js';
 import { spawn } from 'node:child_process';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
@@ -21,8 +22,9 @@ export function validateAnalysis(result) {
 }
 let active = false;
 async function runCodexImage(imagePath, prompt, schema) {
-  if (active) throw Object.assign(new Error('Hay otra foto en análisis. Esperá un momento y volvé a intentar.'), { status: 429, code: 'CODEX_BUSY' });
-  active = true;
+  const log = executionLogger('codex_execution', { serviceTier: 'fast', source: imagePath ? 'photo' : 'description' });
+  if (active) { log('rejected', { reason: 'busy' }); throw Object.assign(new Error('Hay otra foto en análisis. Esperá un momento y volvé a intentar.'), { status: 429, code: 'CODEX_BUSY' }); }
+  active = true; log('started');
   let dir;
   try {
     dir = await mkdtemp(join(tmpdir(), 'foodtrack-codex-'));
@@ -37,13 +39,20 @@ async function runCodexImage(imagePath, prompt, schema) {
       let timedOut = false;
       const timer = setTimeout(() => { timedOut = true; try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, 180000);
       // Never forward CLI diagnostics: they may contain account information.
-      child.stderr.resume();
-      child.on('error', () => { clearTimeout(timer); reject(Object.assign(new Error('No se pudo iniciar Codex en el servidor.'), { code: 'CODEX_START_FAILED' })); });
-      child.on('close', code => { clearTimeout(timer); code === 0 ? resolve() : reject(Object.assign(new Error(timedOut ? 'El análisis tardó demasiado. Volvé a intentarlo.' : 'Codex no pudo analizar la foto. Comprobá la sesión de Codex del servidor y volvé a intentar.'), { code: timedOut ? 'CODEX_TIMEOUT' : 'CODEX_EXIT_FAILED' })); });
+      let diagnosticBytes = 0;
+      child.stderr.on('data', chunk => { diagnosticBytes += chunk.length; });
+      child.once('spawn', () => log('spawned', { pid: child.pid }));
+      child.on('error', () => { log('spawn_failed'); clearTimeout(timer); reject(Object.assign(new Error('No se pudo iniciar Codex en el servidor.'), { code: 'CODEX_START_FAILED' })); });
+      child.on('close', (code, signal) => { log('process_exit', { exitCode: code, signal, timedOut, diagnosticBytes }); clearTimeout(timer); code === 0 ? resolve() : reject(Object.assign(new Error(timedOut ? 'El análisis tardó demasiado. Volvé a intentarlo.' : 'Codex no pudo analizar la foto. Comprobá la sesión de Codex del servidor y volvé a intentar.'), { code: timedOut ? 'CODEX_TIMEOUT' : 'CODEX_EXIT_FAILED' })); });
       child.stdin.on('error', () => {});
       child.stdin.end(prompt);
     });
-    return JSON.parse(await readFile(outputPath, 'utf8'));
+    const result = JSON.parse(await readFile(outputPath, 'utf8'));
+    log('completed', { optionCount: result.options?.length ?? 0 });
+    return result;
+  } catch (error) {
+    log('failed', { reason: error instanceof SyntaxError ? 'invalid_json' : ['CODEX_START_FAILED', 'CODEX_TIMEOUT', 'CODEX_EXIT_FAILED'].includes(error.code) ? error.code : 'execution_error' });
+    throw error;
   } finally {
     active = false;
     if (dir) await rm(dir, { recursive: true, force: true });

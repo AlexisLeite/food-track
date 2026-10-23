@@ -1,3 +1,5 @@
+import { captureDiagnosticAudio, recordAudioResult } from './audio-capture.js';
+import { withRequestLog, logExecution } from './execution-log.js';
 import express from 'express';
 import multer from 'multer';
 import sharp from 'sharp';
@@ -39,6 +41,18 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 'loopback');
+  app.use((req, res, next) => {
+    if (!req.path.startsWith('/api/')) return next();
+    const requestId = randomUUID(), started = Date.now();
+    res.set('X-Request-ID', requestId);
+    withRequestLog(requestId, () => {
+      const fields = () => ({ requestId, method: req.method, path: req.path, userId: req.user?.id, elapsedMs: Date.now() - started });
+      logExecution('api_request', { ...fields(), phase: 'started' });
+      res.once('finish', () => logExecution('api_request', { ...fields(), phase: 'completed', status: res.statusCode }));
+      res.once('close', () => { if (!res.writableEnded) logExecution('api_request', { ...fields(), phase: 'disconnected' }); });
+      next();
+    });
+  });
   app.use((req, res, next) => {
     res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'self'; img-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'", 'Permissions-Policy': 'camera=(self), microphone=(self)' });
     if (req.path.startsWith('/api/')) res.set('Cache-Control', 'no-store');
@@ -215,8 +229,29 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
   const audioUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1, fields: 0 } });
   app.post('/api/transcribe', audioUpload.single('audio'), async (req, res) => {
     if (!req.file) throw fail(400, 'Grabá o seleccioná un audio.');
-    try { res.json(await transcribeAudio(req.file.buffer)); }
-    catch (e) { e.status = e.status || 502; throw e; }
+    const started = Date.now();
+    const log = (outcome, extra = {}) => logExecution('audio_transcription', { outcome, userId: req.user.id, bytes: req.file.size, mimeType: req.file.mimetype, elapsedMs: Date.now() - started, ...extra });
+    log('started');
+    let saved = null;
+    const recordResult = async result => {
+      if (!saved) return;
+      try { await recordAudioResult(saved, result); log('diagnostic_result_saved'); }
+      catch { log('diagnostic_result_failed'); }
+    };
+    try {
+      saved = await captureDiagnosticAudio({ dataDir, userId: req.user.id, buffer: req.file.buffer, mimeType: req.file.mimetype, requestId: res.get('X-Request-ID') });
+      if (saved) log('diagnostic_copy_saved', { file: saved });
+    } catch { log('diagnostic_copy_failed'); }
+    res.once('close', () => { if (!res.writableEnded) log('disconnected'); });
+    try {
+      const result = await transcribeAudio(req.file.buffer);
+      await recordResult({ text: result.text });
+      log('completed'); res.json(result);
+    } catch (e) {
+      e.status = e.status || 502;
+      await recordResult({ errorCode: ['AUDIO_NO_SPEECH', 'AUDIO_TRANSCRIPT_TOO_LONG'].includes(e.code) ? e.code : 'TRANSCRIPTION_FAILED' });
+      log('failed', { status: e.status }); throw e;
+    }
   });
   const analyzing = new Set();
   app.post('/api/meals/:id/analyze', async (req, res) => {
@@ -226,7 +261,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     if (analyzing.has(meal.id)) throw fail(409, 'Esta foto ya se está analizando.');
     analyzing.add(meal.id);
     const analysisStarted = Date.now();
-    const logAnalysis = (outcome, extra = {}) => console.info(JSON.stringify({ event: 'meal_analysis', outcome, userId: req.user.id, mealId: meal.id, source: meal.photo ? 'photo' : 'description', elapsedMs: Date.now() - analysisStarted, ...extra }));
+    const logAnalysis = (outcome, extra = {}) => logExecution('meal_analysis', { outcome, userId: req.user.id, mealId: meal.id, source: meal.photo ? 'photo' : 'description', elapsedMs: Date.now() - analysisStarted, ...extra });
     try {
       const prior = db.prepare('SELECT instructions FROM analyses WHERE meal_id=? ORDER BY created_at, rowid').all(meal.id).map(a => a.instructions).filter(Boolean);
       const context = prior.length ? `Correcciones anteriores (conservar salvo contradicción explícita): ${JSON.stringify(prior.slice(-10))}. Nueva corrección: ${instructions}` : instructions;
