@@ -4,7 +4,7 @@ import { bindDaySwipe } from './swipe.js?v=20261023-day-swipe-1';
 import { readApiResponse } from './api-response.js?v=20261023-audio-errors-1';
 import { processingMarkup, showProcessing } from './processing.js';
 import { getMacroPlan, getGoalProjection, getCalorieLimits, hasMacros, summarizeMeals } from './nutrition.js?v=20261019-deficit-1200-1';
-import { historyChart } from './history.js?v=20261022-maintenance-dashed-1';
+import { historyChart } from './history.js?v=20261023-red-only-1';
 import { createVoiceInput } from './voice.js?v=20261019-repeat-meal-2';
 import { createUserCache, isCancelledError } from './cache.js?v=20261020-week-allocation-1';
 const root = document.querySelector('#app');
@@ -206,7 +206,7 @@ async function changeDay(date, force = false) {
 }
 
 function renderHistory() {
-  root.innerHTML = `${header('Historia')}<div class="view-panel"><section aria-label="Historia de consumo"><div class="history-controls"><div><label for="history-metric">Mostrar</label><select id="history-metric">${[['calories', 'Calorías'], ['protein', 'Proteínas'], ['fat', 'Grasas'], ['carbs', 'Carbohidratos']].map(([key, label]) => `<option value="${key}" ${historyMetric === key ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div><label for="history-range">Período</label><select id="history-range">${[7,30,90].map(n => `<option value="${n}" ${historyRange === n ? 'selected' : ''}>${n} días</option>`).join('')}</select></div><div class="history-end"><label for="history-end">Hasta</label><input type="date" id="history-end" value="${historyEnd}"></div></div>${historyData ? historyChart(historyData, historyMetric) : historyError ? `<p class="error">${esc(historyError)}</p><button class="text" data-action="history">Reintentar</button>` : '<p class="empty history-loading" role="status">Cargando historia…</p>'}</section>${footer()}</div>`;
+  root.innerHTML = `${header('Historia')}<div class="view-panel"><section aria-label="Historia de consumo"><div class="history-controls"><div><label for="history-metric">Mostrar</label><select id="history-metric">${[['calories', 'Calorías'], ['protein', 'Proteínas'], ['fat', 'Grasas'], ['carbs', 'Carbohidratos']].map(([key, label]) => `<option value="${key}" ${historyMetric === key ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div><label for="history-range">Período</label><select id="history-range">${[7,30,90].map(n => `<option value="${n}" ${historyRange === n ? 'selected' : ''}>${n} días</option>`).join('')}</select></div><div class="history-end"><label for="history-end">Hasta</label><input type="date" id="history-end" value="${historyEnd}"></div></div>${historyData ? historyChart(historyData, historyMetric, { asOf: localDate(), maintenance: user.profile.expenditure }) : historyError ? `<p class="error">${esc(historyError)}</p><button class="text" data-action="history">Reintentar</button>` : '<p class="empty history-loading" role="status">Cargando historia…</p>'}</section>${footer()}</div>`;
   syncDock();
   document.querySelector('#history-metric').onchange = e => { historyMetric = e.target.value; renderHistory(); };
   for (const id of ['history-range', 'history-end']) document.getElementById(id).onchange = async () => {
