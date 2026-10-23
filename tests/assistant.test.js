@@ -64,7 +64,7 @@ test('assistant streams deltas via app-server with an ephemeral fixed-model thre
 const fs=require('node:fs'),readline=require('node:readline'),args=process.argv.slice(2);
 if(args[0]!=='app-server')process.exit(2);
 const config=fs.readFileSync(process.env.CODEX_HOME+'/config.toml','utf8');
-for(const value of ['web_search = "live"','shell_tool = false','unified_exec = false','service_tier = "default"','fast_mode = false'])if(!config.includes(value))process.exit(3);
+for(const value of ['web_search = "live"','shell_tool = false','unified_exec = false','service_tier = "default"','fast_mode = false','code_mode_host = true'])if(!config.includes(value))process.exit(3);
 const emit=value=>console.log(JSON.stringify(value));
 readline.createInterface({input:process.stdin}).on('line',line=>{
  const msg=JSON.parse(line);

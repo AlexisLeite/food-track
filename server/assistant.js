@@ -19,13 +19,13 @@ export async function runAssistant({ context, messages, signal, onStatus = () =>
   const log = executionLogger('assistant_execution', { model: CHAT_MODEL });
   const dir = await mkdtemp(join(tmpdir(), 'foodtrack-chat-'));
   let child, timer;
-  const waiting = new Map();let seq=0, settled=false, finalText='';
+  const waiting = new Map();let seq=0, settled=false, finalText='', webSearches=0;
   const kill=()=>{if(child?.pid)try{process.kill(-child.pid,'SIGKILL');}catch{}};
   try {
     // A private configuration prevents user MCPs, rules, plugins and shell tools
     // entering this read-only nutrition chat. Only existing Codex auth is copied.
     await copyFile(join(process.env.CODEX_HOME || join(homedir(),'.codex'),'auth.json'),join(dir,'auth.json'));
-    const disabled=['shell_tool','unified_exec','shell_snapshot','code_mode','code_mode_host','apply_patch_freeform','apps','plugins','hooks','multi_agent','multi_agent_v2','browser_use','computer_use','view_image','image_generation','memories','skill_search','workspace_dependencies'];
+    const disabled=['shell_tool','unified_exec','shell_snapshot','code_mode','apply_patch_freeform','apps','plugins','hooks','multi_agent','multi_agent_v2','browser_use','computer_use','view_image','image_generation','memories','skill_search','workspace_dependencies'];
     await writeFile(join(dir,'config.toml'),`approval_policy = "never"
 sandbox_mode = "read-only"
 web_search = "live"
@@ -33,6 +33,7 @@ project_doc_max_bytes = 0
 service_tier = "default"
 [features]
 fast_mode = false
+code_mode_host = true
 ${disabled.map(key=>`${key} = false`).join('\n')}
 `,{mode:0o600});
     log('started');
@@ -69,7 +70,9 @@ ${disabled.map(key=>`${key} = false`).join('\n')}
         parts.set(params.itemId,(parts.get(params.itemId)||'')+params.delta);publish();
       }else if(method==='item/completed'&&params.item?.type==='agentMessage'){
         parts.set(params.item.id,params.item.text);publish();
-      }else if(method==='item/started'&&params.item?.type==='webSearch')onStatus('Buscando fuentes en la web…');
+      }else if(method==='item/started'&&params.item?.type==='webSearch'){
+        webSearches++;log('web_search_started',{webSearches});onStatus('Buscando fuentes en la web…');
+      }else if(method==='item/completed'&&params.item?.type==='webSearch')log('web_search_completed',{webSearches});
       else if(method==='turn/completed')finish(params.turn?.status==='completed'?null:new Error('El asistente no pudo completar la respuesta.'));
       else if(method==='error'&&!params.willRetry)finish(new Error('El asistente no pudo responder. Volvé a intentarlo.'));
     });
@@ -85,7 +88,7 @@ ${disabled.map(key=>`${key} = false`).join('\n')}
       await rpc('turn/start',{threadId:thread.id,model:CHAT_MODEL,serviceTier:'default',effort:'medium',input:[{type:'text',text:JSON.stringify(messages),text_elements:[]}]});
       await done;
       if(!finalText.trim())throw new Error('El asistente no devolvió una respuesta.');
-      log('completed',{characters:finalText.length});return finalText;
+      log('completed',{characters:finalText.length,webSearches});return finalText;
     } finally { signal?.removeEventListener('abort',abort);lines.close(); }
   } finally {
     clearTimeout(timer);

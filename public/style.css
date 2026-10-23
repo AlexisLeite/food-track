@@ -102,3 +102,5 @@ html.safari-dock-offset body{overflow:visible}html.safari-dock-offset #app-dock{
 body.chat-section-active{height:var(--chat-page-height,100dvh)}body.chat-section-active #app-scroll{overflow:hidden}body.chat-section-active #app{display:flex;flex-direction:column;height:100%;min-height:0;padding-bottom:0}.assistant-view{flex:1;min-height:0;display:flex;flex-direction:column}#assistant-slot{flex:1;min-height:0;display:flex;flex-direction:column}.assistant-header{padding:0 0 14px}.assistant-header h2{margin:0;font-size:18px}.assistant-messages{padding:20px 0}.assistant-composer{padding:12px 0}.assistant-window{position:static;max-width:none;max-height:none;border:0;border-radius:0;box-shadow:none}.bottom-nav .bottom-nav-button:hover{color:#202020}
 
 .assistant-composer textarea:focus-visible{outline:2px solid #202020;outline-offset:-2px}
+
+.assistant-messages{padding-right:14px;scrollbar-gutter:stable}
