@@ -53,8 +53,12 @@ form[data-processing]>:not(.processing-state){display:none!important}
 
 .input-options{display:flex;justify-content:center;gap:12px}.input-options>.voice-control{flex:1;min-width:0}.input-options .voice-status{text-align:center}.text-editor{display:grid;gap:12px;padding:20px 0}.text-editor>.text{justify-self:start}.text-editor textarea{min-height:110px}
 
-.meal-actions{position:relative;display:grid;gap:10px;width:100%;max-width:280px;margin:12px auto 20px}.meal-actions>button{border-radius:12px}.delete-meal-button{background:transparent;border-color:#d7d7d7}.delete-meal-button:hover,.delete-meal-button:focus-visible{background:#a12626;border-color:#a12626;color:#fff}.repeat-picker{position:absolute;top:0;left:0;width:100%;height:48px;pointer-events:none}.repeat-picker input{width:100%;height:100%;opacity:0;pointer-events:none}
+.meal-actions{position:relative;display:grid;gap:10px;width:100%;max-width:280px;margin:12px auto 20px}.meal-actions>button{border-radius:12px}.delete-meal-button{background:transparent;border-color:#d7d7d7}.delete-meal-button:hover,.delete-meal-button:focus-visible{background:#a12626;border-color:#a12626;color:#fff}.repeat-picker{width:100%;padding:10px;border:1px solid #e0e0e0;border-radius:12px;background:#fff}.repeat-calendar-head{display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:8px}.repeat-calendar-head span{font-size:14px;text-transform:capitalize}.repeat-calendar-head button{border:0;padding:0;width:36px;height:36px;font-size:24px}.repeat-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;text-align:center}.repeat-calendar-grid>span{font-size:12px;line-height:32px}.repeat-calendar-grid button{padding:0;min-height:36px;border:0;font-size:13px}.repeat-calendar-grid button[aria-current=date]{box-shadow:inset 0 0 0 1px #202020}
 
 .input-surface{display:grid;min-width:0}.input-surface>[data-input-options],.input-surface>[data-text-editor]{grid-area:1/1;align-self:start;min-width:0}.input-surface.is-switching{overflow:hidden}
 
 .chart-maintenance{stroke:#237b4b;stroke-width:1.5;stroke-dasharray:5 4;fill:none}.chart-point-maintenance{fill:#fff;stroke:#237b4b;stroke-width:1.5}.chart-legend .legend-maintenance{border-color:#237b4b;border-top-style:dashed}.chart-legend{flex-wrap:wrap;gap:10px 20px}
+
+.daily-section{padding-bottom:88px}.date-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;z-index:3;padding:0 24px;background:#fff;border-top:1px solid #eee}.date-nav .date-field{margin-bottom:0}
+
+.date-nav .date-field{height:44px;min-height:44px;line-height:44px}.date-nav .icon{height:44px;min-height:44px;line-height:44px}

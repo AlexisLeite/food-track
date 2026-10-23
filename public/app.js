@@ -1,3 +1,4 @@
+import { bindRepeatCalendar } from './calendar.js?v=20261022-mobile-calendar-1';
 import { processingMarkup, showProcessing } from './processing.js';
 import { getMacroPlan, getGoalProjection, getCalorieLimits, hasMacros, summarizeMeals } from './nutrition.js?v=20261019-deficit-1200-1';
 import { historyChart } from './history.js?v=20261022-maintenance-dashed-1';
@@ -210,7 +211,7 @@ function calorieProgress(total, target) {
 }
 function renderDay() {
   const totals = summarizeMeals(meals), total = totals.calories, target = week?.dailyCalories ?? user.profile.dailyCalories;
-  root.innerHTML = `${header()}<div class="view-panel"><section aria-label="Registro diario"><div class="date-nav"><button class="icon" data-action="prev" aria-label="Día anterior"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg></button><label class="date-field"><span>${esc(dateLabel())}</span><input id="day-date" type="date" value="${currentDate}" aria-label="Seleccionar fecha"></label><button class="icon" data-action="next" aria-label="Día siguiente"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg></button></div><div class="day-panel"><div class="calories" aria-live="polite"><div class="daily-counter ${loadingDay || dayError ? '' : total > target ? 'over-budget' : 'within-budget'}" aria-label="Calorías del día"><strong>${loadingDay ? '…' : dayError ? '—' : fmt(total)}</strong><span class="target"> / ${fmt(target)}</span><span class="calorie-unit"> kcal</span></div><div class="weekly-counter ${week ? week.total > week.target ? 'over-budget' : 'within-budget' : ''}" aria-label="Calorías de la semana" title="Semana de domingo a sábado"><span>${week ? fmt(week.total) : '—'} / ${week ? fmt(week.target) : '—'} kcal</span><span class="sr-only"> · Semana de domingo a sábado</span></div>${calorieProgress(total, target)}${week?.limited ? `<p class="budget-note">El reparto semanal superaría el déficit máximo de 1.200 kcal/día. Se mantiene un objetivo de ${fmt(week.dailyCalories)} kcal.</p>` : ''}</div>${macroSummary(totals, { ...user.profile, dailyCalories: target, macroPlan: getMacroPlan({ ...user.profile, dailyCalories: target }) })}<button class="primary wide capture" data-action="photo" ${uploading ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 5 9.5 3h5L16 5h4a1 1 0 0 1 1 1v14H3V6a1 1 0 0 1 1-1z"/><circle cx="12" cy="12" r="4"/></svg>${uploading ? 'Guardando foto…' : 'Tomar foto'}</button><button class="wide describe-button" data-action="describe" ${uploading ? 'disabled' : ''}>Describir comida</button><input type="file" id="photo-input" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" capture="environment" hidden><div class="meals">${loadingDay ? '<p class="empty" role="status">Cargando…</p>' : dayError ? `<p class="error">${esc(dayError)}</p><button class="text" data-action="retry-day">Reintentar</button>` : meals.length ? meals.map(m => `<button class="meal" data-meal="${m.id}">${m.photoUrl ? `<img src="${m.photoUrl}" alt="" loading="lazy">` : '<span class="text-meal-icon" aria-hidden="true">≡</span>'}<span class="name"><strong>${esc(m.selected?.name || 'Elegir comida')}</strong><small>${esc(m.selected?.portion || 'Pendiente de confirmar')}</small>${m.selected ? `<small>${hasMacros(m.selected) ? macroText(m.selected) : 'Sin macros · reevaluar'}</small>` : ''}</span><span class="kcal">${m.selected ? `${fmt(m.selected.calories)} kcal` : '…'}</span></button>`).join('') : '<p class="empty">Todavía no registraste comidas.</p>'}</div></div></section>${footer()}</div>`;
+  root.innerHTML = `${header()}<div class="view-panel"><section class="daily-section" aria-label="Registro diario"><div class="date-nav"><button class="icon" data-action="prev" aria-label="Día anterior"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg></button><label class="date-field"><span>${esc(dateLabel())}</span><input id="day-date" type="date" value="${currentDate}" aria-label="Seleccionar fecha"></label><button class="icon" data-action="next" aria-label="Día siguiente"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg></button></div><div class="day-panel"><div class="calories" aria-live="polite"><div class="daily-counter ${loadingDay || dayError ? '' : total > target ? 'over-budget' : 'within-budget'}" aria-label="Calorías del día"><strong>${loadingDay ? '…' : dayError ? '—' : fmt(total)}</strong><span class="target"> / ${fmt(target)}</span><span class="calorie-unit"> kcal</span></div><div class="weekly-counter ${week ? week.total > week.target ? 'over-budget' : 'within-budget' : ''}" aria-label="Calorías de la semana" title="Semana de domingo a sábado"><span>${week ? fmt(week.total) : '—'} / ${week ? fmt(week.target) : '—'} kcal</span><span class="sr-only"> · Semana de domingo a sábado</span></div>${calorieProgress(total, target)}${week?.limited ? `<p class="budget-note">El reparto semanal superaría el déficit máximo de 1.200 kcal/día. Se mantiene un objetivo de ${fmt(week.dailyCalories)} kcal.</p>` : ''}</div>${macroSummary(totals, { ...user.profile, dailyCalories: target, macroPlan: getMacroPlan({ ...user.profile, dailyCalories: target }) })}<button class="primary wide capture" data-action="photo" ${uploading ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 5 9.5 3h5L16 5h4a1 1 0 0 1 1 1v14H3V6a1 1 0 0 1 1-1z"/><circle cx="12" cy="12" r="4"/></svg>${uploading ? 'Guardando foto…' : 'Tomar foto'}</button><button class="wide describe-button" data-action="describe" ${uploading ? 'disabled' : ''}>Describir comida</button><input type="file" id="photo-input" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" capture="environment" hidden><div class="meals">${loadingDay ? '<p class="empty" role="status">Cargando…</p>' : dayError ? `<p class="error">${esc(dayError)}</p><button class="text" data-action="retry-day">Reintentar</button>` : meals.length ? meals.map(m => `<button class="meal" data-meal="${m.id}">${m.photoUrl ? `<img src="${m.photoUrl}" alt="" loading="lazy">` : '<span class="text-meal-icon" aria-hidden="true">≡</span>'}<span class="name"><strong>${esc(m.selected?.name || 'Elegir comida')}</strong><small>${esc(m.selected?.portion || 'Pendiente de confirmar')}</small>${m.selected ? `<small>${hasMacros(m.selected) ? macroText(m.selected) : 'Sin macros · reevaluar'}</small>` : ''}</span><span class="kcal">${m.selected ? `${fmt(m.selected.calories)} kcal` : '…'}</span></button>`).join('') : '<p class="empty">Todavía no registraste comidas.</p>'}</div></div></section>${footer()}</div>`;
   document.querySelector('#day-date').onchange = e => { changeDay(e.target.value).catch(e => toast(e.message, true)); };
   document.querySelector('#photo-input').onchange = uploadPhoto;
 }
@@ -329,7 +330,7 @@ function optionMarkup(analysis, selected) {
   }).join('')}</div>`;
 }
 function repeatMealActions() {
-  return `<div class="meal-actions"><button type="button" class="primary wide capture repeat-button" data-action="repeat-meal"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18M8 15h2M14 15h2"/></svg>Repetir comida</button><button type="button" class="wide delete-meal-button" data-action="delete-meal">Eliminar comida</button><div class="repeat-picker"><input type="date" id="repeat-date" tabindex="-1" aria-label="Fecha para repetir comida"></div></div>`;
+  return `<div class="meal-actions"><button type="button" class="primary wide capture repeat-button" data-action="repeat-meal" aria-expanded="false" aria-controls="repeat-calendar"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18M8 15h2M14 15h2"/></svg>Repetir comida</button><button type="button" class="wide delete-meal-button" data-action="delete-meal">Eliminar comida</button><div class="repeat-picker" id="repeat-calendar" role="group" aria-label="Fecha para repetir comida" hidden></div></div>`;
 }
 function openMeal() {
   const m = activeMeal; if (!m) return;
@@ -342,12 +343,12 @@ function openMeal() {
   dialog.innerHTML = `${modalHeader(m.selected ? 'Editar comida' : 'Elegir comida')}<div class="dialog-body">${m.selected && !hasMacros(m.selected) ? '<p class="description">La opción elegida no tiene macros. Reevaluá la comida y elegí una nueva opción para completarlos.</p>' : ''}${m.photoUrl ? `<img class="meal-photo" src="${m.photoUrl}" alt="Foto de tu comida">` : `<p class="description">${esc(m.description)}</p>`}${latest ? `<p class="description">${esc(latest.description)}</p>${repeatMealActions()}${optionMarkup(latest, m.selected)}${!latest.options.length ? '<p class="description">Añadí detalles para ajustar el análisis.</p>' : '<small>Elegí una opción para guardar sus calorías. Son estimaciones.</small>'}` : `<p class="description">La comida está guardada. Analizala para recibir opciones.</p>${repeatMealActions()}`}${m.analyses.length > 1 ? `<details class="history"><summary>Opciones anteriores</summary>${m.analyses.slice(1).map(a => `<p class="hint">${esc(a.instructions || 'Análisis inicial')}</p>${optionMarkup(a, m.selected)}`).join('')}</details>` : ''}<form id="reevaluate" class="reevaluate"><p class="description">${latest ? '¿Querés ajustar el análisis?' : 'Detalles de la comida (opcional)'}</p>${voice.button()}</form></div>`;
   showModal();
   voice.bind(document.querySelector('#reevaluate'), (instructions, source) => runAnalysis(instructions, source));
-  const picker = dialog.querySelector('#repeat-date'), repeatButton = dialog.querySelector('[data-action=repeat-meal]');
+  const picker = dialog.querySelector('#repeat-calendar'), repeatButton = dialog.querySelector('[data-action=repeat-meal]');
   let repeating = false;
-  picker.onchange = async () => {
-    const date = picker.value;
+  bindRepeatCalendar(picker, { date: currentDate, onSelect: async date => {
     if (!date || repeating) return;
-    repeating = true; picker.disabled = true; repeatButton.disabled = true;
+    repeating = true; repeatButton.disabled = true; picker.setAttribute('aria-busy', 'true');
+    picker.querySelectorAll('button').forEach(button => { button.disabled = true; });
     const identity = user?.id, navigation = navigationRequest;
     try {
       const { meal } = await api(`/api/meals/${m.id}/repeat`, { method: 'POST', body: { date } });
@@ -365,8 +366,11 @@ function openMeal() {
         } catch (error) { if (user?.id === identity) toast(error.message, true); }
       }
     } catch (error) { toast(error.message, true); }
-    finally { repeating = false; picker.disabled = false; repeatButton.disabled = false; }
-  };
+    finally {
+      repeating = false; repeatButton.disabled = false; picker.removeAttribute('aria-busy');
+      picker.querySelectorAll('button').forEach(button => { button.disabled = false; });
+    }
+  } });
 
 }
 function updateMeal(meal) { const i = meals.findIndex(m => m.id === meal.id); if (i >= 0) { if (week) week.total += (meal.selected?.calories || 0) - (meals[i].selected?.calories || 0); meals[i] = meal; } }
@@ -400,11 +404,13 @@ document.addEventListener('click', async e => {
       case 'describe': openDescription(); break;
       case 'repeat-meal': {
         if (!activeMeal?.selected) { toast('Elegí una opción antes de repetir la comida.'); break; }
-        const picker = dialog.querySelector('#repeat-date');
-        try {
-          if (typeof picker.showPicker === 'function') picker.showPicker();
-          else { picker.focus({ preventScroll: true }); picker.click(); }
-        } catch { picker.focus({ preventScroll: true }); picker.click(); }
+        const picker = dialog.querySelector('#repeat-calendar');
+        picker.hidden = !picker.hidden;
+        button.setAttribute('aria-expanded', String(!picker.hidden));
+        if (!picker.hidden) {
+          picker.scrollIntoView({ block: 'nearest' });
+          picker.querySelector('[aria-current=date], [data-repeat-date]')?.focus({ preventScroll: true });
+        }
         break;
       }
       case 'photo': document.querySelector('#photo-input').click(); break;
