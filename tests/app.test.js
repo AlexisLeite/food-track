@@ -45,6 +45,7 @@ test('account isolation, persistent options, totals, retry and session revocatio
    assert.equal((await request('/api/register', { method: 'POST', body: { username: 'alice', password: 'passphrase-alice' }, csrf: false })).status, 403);
    const alice = await request('/api/register', { method: 'POST', body: { username: 'alice', password: 'passphrase-alice' } });
    assert.equal(alice.status, 201); const a = alice.cookie;
+   db.prepare('UPDATE users SET enable_codex_extraction=1 WHERE id=?').run(alice.body.user.id);
    assert.equal((await request('/api/me', { cookie: a })).body.user.username, 'alice');
    const bob = await request('/api/register', { method: 'POST', body: { username: 'bob', password: 'passphrase-bob' } }); const b = bob.cookie;
    assert.equal((await request('/api/login', { method: 'POST', body: { username: 'alice', password: 'not-the-password' } })).status, 401);
@@ -193,7 +194,7 @@ test('weekly totals use Sunday to Saturday and preserve daily goal changes', () 
   { date: '2026-10-24', selected: JSON.stringify({ calories: 700 }) },
   { date: '2026-10-25', selected: JSON.stringify({ calories: 9999 }) }
  ] });
- assert.deepEqual(summary, { start: '2026-10-18', end: '2026-10-24', total: 1000, target: 13200, consumedBeforeDate: 0, daysRemaining: 7, remaining: 13200, rawDailyCalories: 13200 / 7, dailyCalories: 1886, minimumDailyCalories: 0, limited: false });
+ assert.deepEqual(summary, { start: '2026-10-18', end: '2026-10-24', total: 1000, target: 13200, maintenance: null, consumedBeforeDate: 0, daysRemaining: 7, remaining: 13200, rawDailyCalories: 13200 / 7, dailyCalories: 1886, minimumDailyCalories: 0, limited: false });
 });
 
 test('projections show deadline weight and time to goal for loss, gain and maintenance', () => {

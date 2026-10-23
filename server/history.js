@@ -37,6 +37,8 @@ export function buildWeek({ date, meals, goals, profile, asOf = date }) {
   const { start, end } = weekRange(date);
   const history = buildBaseHistory({ start, end, meals, goals });
   const target = history.days.reduce((sum, day) => sum + (day.target?.calories ?? profile?.dailyCalories ?? 0), 0);
+  const dailyMaintenance = history.days.map(day => day.maintenance?.calories ?? profile?.expenditure);
+  const maintenance = dailyMaintenance.every(Number.isFinite) ? dailyMaintenance.reduce((sum, calories) => sum + calories, 0) : null;
   // Future days share today's allocation; future weeks begin their own Sunday.
   const allocationDate = date > asOf ? (asOf < start ? start : asOf) : date;
   const consumedBeforeDate = history.days.filter(day => day.date < allocationDate).reduce((sum, day) => sum + (day.actual.calories ?? 0), 0);
@@ -48,7 +50,7 @@ export function buildWeek({ date, meals, goals, profile, asOf = date }) {
   const minimumDailyCalories = getCalorieLimits(allocationProfile || {}).minimum;
   return { start, end,
     total: history.days.reduce((sum, day) => sum + (day.actual.calories ?? 0), 0),
-    target, consumedBeforeDate, daysRemaining, remaining, rawDailyCalories,
+    target, maintenance, consumedBeforeDate, daysRemaining, remaining, rawDailyCalories,
     minimumDailyCalories, limited: Math.round(rawDailyCalories) < minimumDailyCalories,
     dailyCalories: Math.max(minimumDailyCalories, Math.round(rawDailyCalories))
   };

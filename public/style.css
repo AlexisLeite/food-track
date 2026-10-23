@@ -70,3 +70,11 @@ html{height:100%;overflow:hidden}body{display:flex;flex-direction:column;height:
 
 /* Compensate the toolbar gap confirmed on mobile Safari. */
 html.safari-dock-offset body{overflow:visible}html.safari-dock-offset #app-dock{position:relative;bottom:calc(-1 * var(--dock-bottom-offset,0px))}
+
+#notice{inset:auto 16px var(--toast-bottom,120px) auto;transform:none;width:max-content;max-width:min(360px,calc(100% - 32px));border:0;margin:0;pointer-events:none}
+
+#app-scroll{flex:1 1 auto;min-height:0;width:100%;overflow-y:auto;overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch}#app-scroll>main{flex:initial;min-height:100%;overflow:visible}*::-webkit-scrollbar{width:4px;height:4px}*::-webkit-scrollbar-track{background:transparent}*::-webkit-scrollbar-thumb{background:#d8d8d8;border-radius:4px}*::-webkit-scrollbar-thumb:hover{background:#c4c4c4}@supports not selector(::-webkit-scrollbar){*{scrollbar-width:thin;scrollbar-color:#d8d8d8 transparent}}
+
+.daily-counter strong{font-size:40px}.daily-counter .target{font-size:19px;letter-spacing:-.6px}@media(max-width:360px){.daily-counter strong{font-size:34px}.daily-counter .target{font-size:16px}.calories .daily-counter .calorie-unit{font-size:12px}}
+
+.exceeded-target{opacity:.55;color:#b32c2c}.daily-counter .target.exceeded-target{color:#b32c2c}.daily-counter .maintenance{font-size:19px;letter-spacing:-.6px}@media(max-width:360px){.daily-counter .maintenance{font-size:16px}}

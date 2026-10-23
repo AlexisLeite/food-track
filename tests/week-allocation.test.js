@@ -75,3 +75,16 @@ test('day and history APIs use today when projecting all remaining days', async 
     await rm(dataDir,{recursive:true,force:true});
   }
 });
+
+test('weekly maintenance preserves daily expenditure changes independently of the weight-loss target', () => {
+  const original = { ...profile, expenditure: 2500 };
+  const changed = { ...profile, expenditure: 2400 };
+  const budget = buildWeek({ date:'2026-10-23', asOf:'2026-10-23', profile:changed, meals:[], goals:[
+    {date:'2026-10-18',profile:JSON.stringify(original)},
+    {date:'2026-10-21',profile:JSON.stringify(changed)}
+  ] });
+  assert.equal(budget.maintenance,3*2500+4*2400);
+  assert.equal(budget.target,14000);
+  assert.equal(buildWeek({date:'2026-10-23',profile,meals:[],goals:[]}).maintenance,17500);
+  assert.equal(buildWeek({date:'2026-10-23',profile:{dailyCalories:2000},meals:[],goals:[]}).maintenance,null);
+});

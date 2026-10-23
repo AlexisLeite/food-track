@@ -10,7 +10,7 @@
     "dev": "node --watch server/index.js",
     "start": "node server/index.js",
     "test": "node --test tests/*.test.js",
-    "check": "node --check server/app.js && node --check server/codex.js && node --check public/app.js && node --check server/nutrition.js && node --check public/nutrition.js && node --check server/history.js && node --check public/history.js && node --check public/voice.js && node --check public/cache.js && node --check public/processing.js && node --check server/calorie-policy.js && node --check public/api-response.js && node --check server/execution-log.js && node --check public/swipe.js && node --check server/audio-capture.js",
+    "check": "node --check server/app.js && node --check server/codex.js && node --check public/app.js && node --check server/nutrition.js && node --check public/nutrition.js && node --check server/history.js && node --check public/history.js && node --check public/voice.js && node --check public/cache.js && node --check public/processing.js && node --check server/calorie-policy.js && node --check public/api-response.js && node --check server/execution-log.js && node --check public/swipe.js && node --check server/audio-capture.js && node --check server/codex-access.js && node --check public/calorie-progress.js",
     "build:cache": "esbuild client/query-core.js --bundle --format=esm --platform=browser --target=es2020 --minify --legal-comments=eof --outfile=public/vendor/query-core.js"
   },
   "dependencies": {

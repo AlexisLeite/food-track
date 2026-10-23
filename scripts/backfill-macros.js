@@ -10,7 +10,7 @@ const db = new DatabaseSync(path.join(dataDir, 'foodtrack.sqlite'));
 db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
 let completed = 0, selectedCompleted = 0;
 try {
-  const meals = db.prepare('SELECT * FROM meals ORDER BY created_at').all();
+  const meals = db.prepare('SELECT meals.* FROM meals JOIN users ON users.id=meals.user_id WHERE users.enable_codex_extraction=1 ORDER BY meals.created_at').all();
   const backupDir = path.join(dataDir, 'backups');
   await mkdir(backupDir, { recursive: true, mode: 0o700 });
   await backup(db, path.join(backupDir, `before-macros-${Date.now()}.sqlite`));

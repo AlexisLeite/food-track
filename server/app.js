@@ -1,3 +1,4 @@
+import { migrateCodexAccess } from './codex-access.js';
 import { captureDiagnosticAudio, recordAudioResult } from './audio-capture.js';
 import { withRequestLog, logExecution } from './execution-log.js';
 import express from 'express';
@@ -24,7 +25,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
   await mkdir(path.join(dataDir, 'photos'), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(path.join(dataDir, 'foodtrack.sqlite'));
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
-    CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password TEXT NOT NULL, profile TEXT);
+    CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password TEXT NOT NULL, profile TEXT, enable_codex_extraction INTEGER NOT NULL DEFAULT 0 CHECK(enable_codex_extraction IN (0,1)));
     CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS meals(id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, date TEXT NOT NULL, photo TEXT NOT NULL, selected TEXT, created_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS meals_user_date ON meals(user_id,date);
@@ -32,6 +33,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     CREATE TABLE IF NOT EXISTS meal_descriptions(meal_id TEXT PRIMARY KEY REFERENCES meals(id) ON DELETE CASCADE, description TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS profile_goals(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, date TEXT NOT NULL, profile TEXT NOT NULL, PRIMARY KEY(user_id,date));
     PRAGMA user_version=1;`);
+  await migrateCodexAccess(db, dataDir);
   // Seed the earliest known goal for existing accounts; earlier goals are unknown.
   for (const user of db.prepare('SELECT id,profile FROM users WHERE profile IS NOT NULL').all()) {
     const profile = JSON.parse(user.profile);
@@ -256,6 +258,10 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
   const analyzing = new Set();
   app.post('/api/meals/:id/analyze', async (req, res) => {
     const meal = ownedMeal(req);
+    if (req.user.enable_codex_extraction !== 1) {
+      logExecution('meal_analysis', { outcome: 'denied', userId: req.user.id, mealId: meal.id, reason: 'CODEX_EXTRACTION_DISABLED' });
+      throw Object.assign(fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.'), { code: 'CODEX_EXTRACTION_DISABLED' });
+    }
     const instructions = req.body?.instructions ?? '';
     if (typeof instructions !== 'string' || instructions.length > 1500) throw fail(400, 'Las instrucciones pueden tener hasta 1500 caracteres.');
     if (analyzing.has(meal.id)) throw fail(409, 'Esta foto ya se está analizando.');
@@ -298,7 +304,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     if (err instanceof multer.MulterError) status = 400;
     const message = err.code === 'LIMIT_FILE_SIZE' ? 'El archivo supera el tamaño permitido (12 MB para fotos, 8 MB para audio).' : err instanceof multer.MulterError ? 'Subí una sola foto de hasta 12 MB.' : status < 500 || status === 502 ? err.message : 'Ocurrió un error. Volvé a intentarlo.';
     if (status === 500) console.error('Request failed:', err.code || err.name);
-    res.status(status).json({ error: message });
+    res.status(status).json({ error: message, ...(err.code === 'CODEX_EXTRACTION_DISABLED' ? { code: err.code } : {}) });
   });
   return { app, db };
 }
