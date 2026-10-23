@@ -13,13 +13,17 @@ export function shouldSendMessage(text, key) {
   if (key.key !== 'Enter' || key.isComposing || key.shiftKey || key.altKey || key.metaKey) return false;
   return key.ctrlKey || !/[\r\n]/.test(text);
 }
+export function mealSuggestion(now = new Date()) {
+  const hour = Number(new Intl.DateTimeFormat('en-GB',{timeZone:'America/Montevideo',hour:'2-digit',hourCycle:'h23'}).format(now));
+  return hour < 15 ? 'Sugerime comidas para este mediodía' : 'Sugerime comidas para esta noche';
+}
 export function createAssistant({notify=()=>{}}={}) {
   const host=document.createElement('div');host.id='assistant-host';host.hidden=true;
   host.innerHTML=`<section id="food-assistant" class="assistant-window" aria-label="Asistente de comida" hidden><header class="assistant-header">${chatIcon}<h2>Asistente</h2></header><div class="assistant-messages" role="log" aria-label="Conversación" aria-live="polite" aria-relevant="additions"></div><p class="assistant-status" role="status" hidden></p><form class="assistant-composer"><textarea aria-label="Mensaje al asistente" placeholder="Preguntá sobre tu alimentación…" rows="1" maxlength="8000"></textarea><button type="submit" class="assistant-send" aria-label="Enviar mensaje">${sendIcon}</button></form></section>`;
   document.body.append(host);
   const panel=host.querySelector('.assistant-window'),messagesEl=host.querySelector('.assistant-messages'),status=host.querySelector('.assistant-status'),input=host.querySelector('textarea'),form=host.querySelector('form'),button=host.querySelector('.assistant-send');
   const renderers=new Set();
-  let identity=null, messages=[],busy=false,controller=null,generation=0,follow=true, recording=null, active=false, savedScroll=0;
+  let identity=null, messages=[],busy=false,controller=null,generation=0,follow=true, recording=null, active=false, savedScroll=0, suggestionTimer=null;
   const focusInput=()=>{if(active&&!matchMedia('(pointer: coarse), (max-width: 600px)').matches)input.focus({preventScroll:true});};
   const scroll=()=>{if(active&&follow)messagesEl.scrollTop=messagesEl.scrollHeight;};
   messagesEl.addEventListener('scroll',()=>{if(!active)return;follow=messagesEl.scrollHeight-messagesEl.scrollTop-messagesEl.clientHeight<40;});
@@ -32,12 +36,14 @@ export function createAssistant({notify=()=>{}}={}) {
     for(const renderer of renderers)renderer.dispose();renderers.clear();
     messagesEl.replaceChildren();const intro=document.createElement('div');intro.className='assistant-intro';
     const text=document.createElement('p');text.textContent='Tus registros, un poco más claros.';intro.append(text);
-    for(const prompt of ['¿Cómo voy esta semana?','¿Qué hábitos podría mejorar?','Sugerime comidas para la semana']){
+    for(const [index,prompt] of ['¿Cómo voy esta semana?','¿Qué hábitos podría mejorar?','Sugerime comidas para la semana',mealSuggestion(),'Sugerime un bocadillo'].entries()){
       const suggestion=document.createElement('button');suggestion.type='button';suggestion.textContent=prompt;
-      suggestion.onclick=()=>{input.value=prompt;form.requestSubmit();};intro.append(suggestion);
+      if(index===3)suggestion.dataset.timedMeal='true';
+      suggestion.onclick=()=>{input.value=suggestion.dataset.timedMeal?mealSuggestion():prompt;form.requestSubmit();};intro.append(suggestion);
     }
     messagesEl.append(intro);
   };
+  const refreshMealSuggestion=()=>{const button=messagesEl.querySelector('[data-timed-meal]');if(button)button.textContent=mealSuggestion();};
   const updateButton=()=>{
     const hasText=!!input.value.trim();
     button.innerHTML=busy||recording?stopIcon:hasText?sendIcon:micIcon;
@@ -128,15 +134,17 @@ export function createAssistant({notify=()=>{}}={}) {
       if(error.status===403)notify(error.message,true);
     }finally{if(turn===generation){setBusy(false);focusInput();}}
   };
-  window.addEventListener('pagehide',()=>{++generation;controller?.abort();releaseRecording();});
+  window.addEventListener('pagehide',()=>{clearInterval(suggestionTimer);++generation;controller?.abort();releaseRecording();});
   empty();setBusy(false);
   return {
     mount(slot){
       const wasActive=active;
+      clearInterval(suggestionTimer);
       if(active&&!slot){savedScroll=messagesEl.scrollTop;input.blur();if(recording){++generation;releaseRecording();setBusy(false);}}
       active=!!slot&&!!identity;panel.hidden=!active;
       (active?slot:host).append(panel);
       if(active){
+        refreshMealSuggestion();suggestionTimer=setInterval(refreshMealSuggestion,60000);
         loadRenderer().catch(()=>notify('No se pudo cargar el chat. Recargá la página.',true));
         requestAnimationFrame(()=>{if(active){if(follow)scroll();else messagesEl.scrollTop=savedScroll;}});
         if(!wasActive)focusInput();

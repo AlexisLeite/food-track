@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApplication } from '../server/app.js';
 import { runAssistant, validateMessages, CHAT_MODEL } from '../server/assistant.js';
-import { shouldSendMessage } from '../public/assistant.js';
+import { mealSuggestion, shouldSendMessage } from '../public/assistant.js';
 
 test('chat requires SQL authorization, isolates records, refreshes context and keeps no server conversations',async()=>{
  const dataDir=await mkdtemp(join(tmpdir(),'foodtrack-chat-test-'));let received;
@@ -94,4 +94,12 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   if(originalHome===undefined)delete process.env.CODEX_HOME;else process.env.CODEX_HOME=originalHome;
   await rm(dir,{recursive:true,force:true});
  }
+});
+
+// Uruguay is UTC−3: the label switches at 15:00 locally, regardless of host zone.
+test('meal suggestion follows Uruguay lunch/dinner time and rolls over at local midnight',()=>{
+ assert.equal(mealSuggestion(new Date('2026-10-23T17:59:00Z')),'Sugerime comidas para este mediodía');
+ assert.equal(mealSuggestion(new Date('2026-10-23T18:00:00Z')),'Sugerime comidas para esta noche');
+ assert.equal(mealSuggestion(new Date('2026-10-24T02:59:00Z')),'Sugerime comidas para esta noche');
+ assert.equal(mealSuggestion(new Date('2026-10-24T03:00:00Z')),'Sugerime comidas para este mediodía');
 });

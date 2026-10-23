@@ -123,7 +123,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     const goals = db.prepare('SELECT date,profile FROM profile_goals WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, asOf);
     const profile = req.user.profile ? withMacroPlan(JSON.parse(req.user.profile)) : null;
     const recent = meals.filter(meal => meal.date >= start);
-    const context = { today: asOf, profile, week: profile ? buildWeek({ date: asOf, asOf, meals, goals, profile }) : null,
+    const context = { today: asOf, timeZone: 'America/Montevideo', localTime: new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Montevideo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date()), profile, week: profile ? buildWeek({ date: asOf, asOf, meals, goals, profile }) : null,
       history: buildHistory({ start, end: asOf, meals, goals, asOf }),
       meals: recent.slice(-500).map(meal => ({ date: meal.date, food: meal.selected ? (({ name, portion, calories, protein, fat, carbs, details }) => ({ name, portion, calories, protein, fat, carbs, details }))(JSON.parse(meal.selected)) : null })),
       coverage: { days: 90, totalMeals: recent.length, detailedMeals: Math.min(recent.length,500), note: 'Solo comidas confirmadas tienen nutrientes; detalle limitado a las últimas 500 comidas de 90 días. Los totales diarios incluyen todas.' } };

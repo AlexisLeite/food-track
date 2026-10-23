@@ -1,4 +1,4 @@
-import { createAssistant } from './assistant.js?v=20261023-chat-section-1';
+import { createAssistant } from './assistant.js?v=20261023-meal-suggestions-1';
 import { calorieProgressMarkup } from './calorie-progress.js?v=20261023-maintenance-bar-1';
 import './dock-offset.js?v=20261023-safari-offset-16';
 import { bindDaySwipe } from './swipe.js?v=20261023-day-swipe-1';
