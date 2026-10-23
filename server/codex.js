@@ -31,7 +31,7 @@ async function runCodexImage(imagePath, prompt, schema) {
     await writeFile(schemaPath, JSON.stringify(schema));
 
     await new Promise((resolve, reject) => {
-      const args = ['exec', '--ignore-user-config', '--ignore-rules', '--ephemeral', '--skip-git-repo-check', '-s', 'read-only', '-c', 'approval_policy="never"', '-c', 'features.shell_tool=false', '-c', 'features.apply_patch_freeform=false', '--output-schema', schemaPath, '--output-last-message', outputPath, '--image', imagePath, '-'];
+      const args = ['exec', '--ignore-user-config', '--ignore-rules', '--ephemeral', '--skip-git-repo-check', '-s', 'read-only', '-c', 'approval_policy="never"', '-c', 'service_tier="fast"', '-c', 'features.fast_mode=true', '-c', 'features.shell_tool=false', '-c', 'features.apply_patch_freeform=false', '--output-schema', schemaPath, '--output-last-message', outputPath, '--image', imagePath, '-'];
       if (!imagePath) args.splice(args.indexOf('--image'), 2);
       const child = spawn(process.env.CODEX_BIN || '/usr/local/bin/codex', args, { cwd: dir, env: { PATH: process.env.PATH, HOME: process.env.HOME, ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}) }, stdio: ['pipe', 'ignore', 'pipe'], detached: true });
       let timedOut = false;

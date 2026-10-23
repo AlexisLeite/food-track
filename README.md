@@ -128,3 +128,5 @@ La política versión 5 fija un déficit máximo de 1.200 kcal/día, tanto para 
 En el modal de una comida, «Repetir comida» permite elegir una fecha y copiar la opción confirmada, con las mismas calorías y macros, sin solicitar un análisis nuevo. La copia conserva descripción, alternativas y una foto independiente, y puede editarse o eliminarse sin afectar al registro original. Se invalidan las cachés de los días e Historia y se actualiza el presupuesto semanal. Las comidas pendientes de selección no se pueden repetir.
 
 El cambio entre los botones de grabar/escribir y el campo de texto usa una transición de 180 ms con desplazamiento, desvanecimiento y ajuste de altura, también al volver. Se conserva el borrador y se respeta reducir movimiento.
+
+Todas las evaluaciones de comida (foto, descripción, reevaluación y completado de macros) solicitan Fast mediante `service_tier="fast"` y `features.fast_mode=true` en cada ejecución de Codex, incluso al omitir la configuración global. Referencia: https://learn.chatgpt.com/docs/agent-configuration/speed.
