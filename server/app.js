@@ -1,6 +1,7 @@
 import { runAssistant, validateMessages } from './assistant.js';
 import { migrateCodexAccess } from './codex-access.js';
 import { captureDiagnosticAudio, recordAudioResult } from './audio-capture.js';
+import { createPhotoStorage } from './photo-storage.js';
 import { withRequestLog, logExecution } from './execution-log.js';
 import express from 'express';
 import multer from 'multer';
@@ -8,7 +9,6 @@ import sharp from 'sharp';
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, randomUUID, createHash, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { mkdir, writeFile, unlink, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { calculateProfile, validDate, today, withMacroPlan } from './nutrition.js';
@@ -22,8 +22,8 @@ const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
-export async function createApplication({ dataDir = path.resolve(process.env.DATA_DIR || 'data'), analyzer = analyzePhoto, descriptionAnalyzer = analyzeDescription, assistantRunner = runAssistant, origin = process.env.APP_ORIGIN || 'http://localhost:3086', secureCookies = process.env.COOKIE_SECURE === 'true' } = {}) {
-  await mkdir(path.join(dataDir, 'photos'), { recursive: true, mode: 0o700 });
+export async function createApplication({ dataDir = path.resolve(process.env.DATA_DIR || 'data'), photoStorage = createPhotoStorage(dataDir), analyzer = analyzePhoto, descriptionAnalyzer = analyzeDescription, assistantRunner = runAssistant, origin = process.env.APP_ORIGIN || 'http://localhost:3086', secureCookies = process.env.COOKIE_SECURE === 'true' } = {}) {
+  await photoStorage.init();
   const db = new DatabaseSync(path.join(dataDir, 'foodtrack.sqlite'));
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
     CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password TEXT NOT NULL, profile TEXT, enable_codex_extraction INTEGER NOT NULL DEFAULT 0 CHECK(enable_codex_extraction IN (0,1)));
@@ -222,10 +222,14 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     const original = ownedMeal(req), date = req.body?.date;
     if (!validDate(date)) throw fail(400, 'Elegí una fecha válida.');
     if (!original.selected) throw fail(409, 'Elegí una opción antes de repetir la comida.');
-    const id = randomUUID(), photo = original.photo ? `${id}.jpg` : '';
+    const id = randomUUID();
+    let photo = original.photo ? `${id}.jpg` : '';
     let committed = false;
     try {
-      if (photo) await copyFile(path.join(dataDir, 'photos', original.photo), path.join(dataDir, 'photos', photo));
+      if (photo) {
+        try { await photoStorage.copy(original.photo, photo); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; photo = ''; }
+      }
       const selected = JSON.parse(original.selected);
       const analyses = db.prepare('SELECT * FROM analyses WHERE meal_id=? ORDER BY created_at, rowid').all(original.id);
       const mapped = new Map(analyses.map(analysis => [analysis.id, randomUUID()]));
@@ -248,11 +252,16 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       res.status(201).json({ meal: mealData(db.prepare('SELECT * FROM meals WHERE id=?').get(id)) });
     } catch (error) {
-      if (photo && !committed) await unlink(path.join(dataDir, 'photos', photo)).catch(() => {});
+      if (photo && !committed) await photoStorage.remove(photo).catch(() => {});
       throw error;
     }
   });
-  app.get('/api/meals/:id/photo', (req, res) => { const meal = ownedMeal(req); if (!meal.photo) throw fail(404, 'Esta comida se registró por texto.'); res.sendFile(path.resolve(dataDir, 'photos', meal.photo)); });
+  app.get('/api/meals/:id/photo', async (req, res) => {
+    const meal = ownedMeal(req);
+    if (!meal.photo) throw fail(404, 'Esta comida se registró por texto.');
+    try { res.type('image/jpeg').send(await photoStorage.read(meal.photo)); }
+    catch (error) { if (error.code === 'ENOENT') throw fail(404, 'La foto no está disponible mientras falta el disco externo.'); throw error; }
+  });
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024, files: 1, fields: 2, fieldSize: 2000 } });
   app.post('/api/meals', upload.single('photo'), async (req, res) => {
     if (!req.user.profile) throw fail(400, 'Guardá tu configuración antes de añadir comidas.');
@@ -262,7 +271,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     let image;
     try { image = await sharp(req.file.buffer, { limitInputPixels: 40000000 }).rotate().resize(1600, 1600, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer(); }
     catch { throw fail(400, 'No se pudo leer la imagen. Usá una foto JPG, PNG o WebP.'); }
-    await writeFile(path.join(dataDir, 'photos', photo), image, { mode: 0o600 });
+    await photoStorage.write(photo, image);
     db.prepare('INSERT INTO meals VALUES (?,?,?,?,?,?)').run(id, req.user.id, req.body.date, photo, null, new Date().toISOString());
     // Keep the uploaded meal even if Codex is unavailable, so analysis can be retried.
     res.status(201).json({ meal: mealData(db.prepare('SELECT * FROM meals WHERE id=?').get(id)) });
@@ -311,7 +320,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
       const prior = db.prepare('SELECT instructions FROM analyses WHERE meal_id=? ORDER BY created_at, rowid').all(meal.id).map(a => a.instructions).filter(Boolean);
       const context = prior.length ? `Correcciones anteriores (conservar salvo contradicción explícita): ${JSON.stringify(prior.slice(-10))}. Nueva corrección: ${instructions}` : instructions;
       const result = meal.photo
-        ? await analyzer(path.join(dataDir, 'photos', meal.photo), context)
+        ? await photoStorage.withFile(meal.photo, file => analyzer(file, context))
         : await descriptionAnalyzer(db.prepare('SELECT description FROM meal_descriptions WHERE meal_id=?').get(meal.id)?.description || '', context);
       if (!db.prepare('SELECT id FROM meals WHERE id=? AND user_id=?').get(meal.id, req.user.id)) throw fail(404, 'La comida fue eliminada.');
       insertAnalysis(meal.id, instructions, result);
@@ -333,7 +342,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     const meal = ownedMeal(req);
     if (analyzing.has(meal.id)) throw fail(409, 'Esperá a que termine el análisis para eliminar esta comida.');
     db.prepare('DELETE FROM meals WHERE id=?').run(meal.id);
-    if (meal.photo) await unlink(path.join(dataDir, 'photos', meal.photo)).catch(() => {});
+    if (meal.photo) await photoStorage.remove(meal.photo).catch(() => {});
     res.json({ ok: true });
   });
   app.use('/api', (req, res) => res.status(404).json({ error: 'Ruta no encontrada.' }));
@@ -345,5 +354,5 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     if (status === 500) console.error('Request failed:', err.code || err.name);
     res.status(status).json({ error: message, ...(err.code === 'CODEX_EXTRACTION_DISABLED' ? { code: err.code } : {}) });
   });
-  return { app, db };
+  return { app, db, photoStorage };
 }

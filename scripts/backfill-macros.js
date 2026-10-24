@@ -3,9 +3,11 @@ import { DatabaseSync, backup } from 'node:sqlite';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { estimateMissingMacros } from '../server/codex.js';
+import { createPhotoStorage } from '../server/photo-storage.js';
 import { hasMacros, macroKeys, summarizeMeals } from '../public/nutrition.js';
 
 const dataDir = path.resolve(process.env.DATA_DIR || 'data');
+const photos = createPhotoStorage(dataDir);
 const db = new DatabaseSync(path.join(dataDir, 'foodtrack.sqlite'));
 db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
 let completed = 0, selectedCompleted = 0;
@@ -31,7 +33,7 @@ try {
     if (!pending.length) continue;
     const inputs = pending.map((p, index) => ({ index, name: p.option.name, portion: p.option.portion, calories: p.option.calories, details: p.option.details }));
     const context = pending.map((p, index) => ({ index, description: p.analysis?.description || '', instructions: p.analysis?.instructions || '' }));
-    const results = await estimateMissingMacros(path.join(dataDir, 'photos', meal.photo), inputs, context);
+    const results = await photos.withFile(meal.photo, file => estimateMissingMacros(file, inputs, context));
     const enriched = new Map(results.map(r => [r.index, Object.fromEntries(macroKeys.map(k => [k, r[k]]))]));
     db.exec('BEGIN IMMEDIATE');
     try {

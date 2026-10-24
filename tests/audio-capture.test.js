@@ -21,7 +21,7 @@ test('diagnostic audio capture saves only the next upload for the armed account'
   } finally { await rm(dataDir, { recursive: true, force: true }); }
 });
 
-test('continuous capture retains every upload for the configured user on the configured destination', async () => {
+test('continuous capture retains every upload locally before archiving', async () => {
   const { enableContinuousAudioCapture } = await import('../server/audio-capture.js');
   const dataDir = await mkdtemp(join(tmpdir(), 'foodtrack-continuous-'));
   const destination = await mkdtemp(join(tmpdir(), 'foodtrack-secondary-'));
@@ -32,7 +32,7 @@ test('continuous capture retains every upload for the configured user on the con
     const files = await Promise.all([captureDiagnosticAudio(input), captureDiagnosticAudio(input), captureDiagnosticAudio(input)]);
     assert.equal(new Set(files).size, 3);
     for (const file of files) {
-      assert.ok(file.startsWith(destination + '/'));
+      assert.ok(file.startsWith(join(dataDir, 'audio-debug', 'pending') + '/'));
       assert.ok(file.endsWith('.m4a'));
       assert.deepEqual(await readFile(file), input.buffer);
       assert.equal((await stat(file)).mode & 0o777, 0o600);

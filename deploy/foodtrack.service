@@ -1,6 +1,5 @@
 [Unit]
 Description=Comida - diario de calorias
-RequiresMountsFor=/mnt/scraper-db
 After=network-online.target
 Wants=network-online.target
 
@@ -10,6 +9,9 @@ User=root
 WorkingDirectory=/repos/foodtrack
 EnvironmentFile=/repos/foodtrack/.env
 Environment=HOME=/root
+Environment=FOODTRACK_PHOTOS_DIR=/mnt/scraper-db/food-track/photos
+Environment=FOODTRACK_MEDIA_MOUNT=/mnt/scraper-db
+Environment=FOODTRACK_MEDIA_UUID=301f3153-374a-4a01-99ba-7d9979e3bf01
 ExecStart=/usr/bin/node /repos/foodtrack/server/index.js
 Restart=on-failure
 RestartSec=3
