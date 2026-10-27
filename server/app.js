@@ -1,3 +1,4 @@
+import { submissionHandler, submissionReceipt } from './submissions.js';
 import { runAssistant, validateMessages } from './assistant.js';
 import { migrateCodexAccess } from './codex-access.js';
 import { captureDiagnosticAudio, recordAudioResult } from './audio-capture.js';
@@ -117,6 +118,11 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
   app.post('/api/chat', async (req, res) => {
     if (req.user.enable_codex_extraction !== 1) throw fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.');
     const messages = validateMessages(req.body?.messages);
+    const receipt = submissionReceipt(db, req);
+    if (receipt?.response) {
+      res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+      return res.end(`data: ${JSON.stringify({ type: 'message', ...receipt.response })}\n\n`);
+    }
     if (activeChats.has(req.user.id) || activeChats.size >= 2) throw fail(429, 'El asistente está ocupado. Esperá un momento.');
     const asOf = today(), start = dateOffset(asOf, -89);
     const meals = db.prepare('SELECT date,selected FROM meals WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, asOf);
@@ -144,7 +150,9 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
       // A permission revoked during a query must also block delivery.
       const allowed = db.prepare('SELECT enable_codex_extraction FROM users WHERE id=?').get(req.user.id);
       if (allowed?.enable_codex_extraction !== 1) throw new Error('No tenés autorización para usar esta función. Contactá con el administrador.');
-      send('message', { text });
+      const response = { text, ...(receipt ? { submissionHash: receipt.id } : {}) };
+      receipt?.save(200, response);
+      send('message', response);
     } catch (error) {
       logExecution('assistant_request', { phase: 'failed', userId: req.user.id, aborted: controller.signal.aborted });
       if (!controller.signal.aborted) send('error', { text: error.message || 'El asistente no pudo responder.' });
@@ -202,9 +210,17 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     const rangeStart = weekRange(start).start, rangeEnd = weekRange(end).end;
     const meals = db.prepare('SELECT date,selected FROM meals WHERE user_id=? AND date BETWEEN ? AND ? ORDER BY date').all(req.user.id, rangeStart, rangeEnd);
     const goals = db.prepare('SELECT date,profile FROM profile_goals WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, rangeEnd);
-    sendVersioned(req, res, buildHistory({ start, end, meals, goals, asOf: today() }));
+    const history = buildHistory({ start, end, meals, goals, asOf: today() });
+    history.balanceDays = start === rangeStart ? history.days : buildHistory({ start: rangeStart, end, meals, goals, asOf: today() }).days;
+    sendVersioned(req, res, history);
   });
-  app.post('/api/meals/describe', (req, res) => {
+  const withSubmission = submissionHandler(db, { authorizeReplay: req => {
+    if (/\/analyze$/.test(req.path)) {
+      ownedMeal(req);
+      if (req.user.enable_codex_extraction !== 1) throw Object.assign(fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.'), { code: 'CODEX_EXTRACTION_DISABLED' });
+    }
+  } });
+  app.post('/api/meals/describe', withSubmission((req, res) => {
     if (!req.user.profile) throw fail(400, 'Guardá tu configuración antes de añadir comidas.');
     const { date, description } = req.body || {};
     if (!validDate(date)) throw fail(400, 'Fecha inválida.');
@@ -217,7 +233,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
       db.exec('COMMIT');
     } catch (e) { db.exec('ROLLBACK'); throw e; }
     res.status(201).json({ meal: mealData(db.prepare('SELECT * FROM meals WHERE id=?').get(id)) });
-  });
+  }));
   app.post('/api/meals/:id/repeat', async (req, res) => {
     const original = ownedMeal(req), date = req.body?.date;
     if (!validDate(date)) throw fail(400, 'Elegí una fecha válida.');
@@ -263,7 +279,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     catch (error) { if (error.code === 'ENOENT') throw fail(404, 'La foto no está disponible mientras falta el disco externo.'); throw error; }
   });
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024, files: 1, fields: 2, fieldSize: 2000 } });
-  app.post('/api/meals', upload.single('photo'), async (req, res) => {
+  app.post('/api/meals', upload.single('photo'), withSubmission(async (req, res) => {
     if (!req.user.profile) throw fail(400, 'Guardá tu configuración antes de añadir comidas.');
     if (!validDate(req.body.date)) throw fail(400, 'Fecha inválida.');
     if (!req.file) throw fail(400, 'Seleccioná una foto.');
@@ -275,9 +291,9 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     db.prepare('INSERT INTO meals VALUES (?,?,?,?,?,?)').run(id, req.user.id, req.body.date, photo, null, new Date().toISOString());
     // Keep the uploaded meal even if Codex is unavailable, so analysis can be retried.
     res.status(201).json({ meal: mealData(db.prepare('SELECT * FROM meals WHERE id=?').get(id)) });
-  });
+  }));
   const audioUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1, fields: 0 } });
-  app.post('/api/transcribe', audioUpload.single('audio'), async (req, res) => {
+  app.post('/api/transcribe', audioUpload.single('audio'), withSubmission(async (req, res) => {
     if (!req.file) throw fail(400, 'Grabá o seleccioná un audio.');
     const started = Date.now();
     const log = (outcome, extra = {}) => logExecution('audio_transcription', { outcome, userId: req.user.id, bytes: req.file.size, mimeType: req.file.mimetype, elapsedMs: Date.now() - started, ...extra });
@@ -302,9 +318,9 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
       await recordResult({ errorCode: ['AUDIO_NO_SPEECH', 'AUDIO_TRANSCRIPT_TOO_LONG'].includes(e.code) ? e.code : 'TRANSCRIPTION_FAILED' });
       log('failed', { status: e.status }); throw e;
     }
-  });
+  }));
   const analyzing = new Set();
-  app.post('/api/meals/:id/analyze', async (req, res) => {
+  app.post('/api/meals/:id/analyze', withSubmission(async (req, res) => {
     const meal = ownedMeal(req);
     if (req.user.enable_codex_extraction !== 1) {
       logExecution('meal_analysis', { outcome: 'denied', userId: req.user.id, mealId: meal.id, reason: 'CODEX_EXTRACTION_DISABLED' });
@@ -328,7 +344,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
       res.json({ meal: mealData(db.prepare('SELECT * FROM meals WHERE id=?').get(meal.id)) });
     } catch (e) { if (!e.status) e.status = 502; logAnalysis('failed', { status: e.status, reason: ['CODEX_BUSY', 'CODEX_START_FAILED', 'CODEX_TIMEOUT', 'CODEX_EXIT_FAILED'].includes(e.code) ? e.code : 'ANALYSIS_ERROR' }); throw e; }
     finally { analyzing.delete(meal.id); }
-  });
+  }));
   app.put('/api/meals/:id/selection', (req, res) => {
     const meal = ownedMeal(req);
     const { analysisId, optionIndex } = req.body || {};

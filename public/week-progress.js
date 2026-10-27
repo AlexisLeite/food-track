@@ -34,3 +34,19 @@ export function currentWeekProgress(days, asOf, currentMaintenance) {
   }
   return result;
 }
+
+// Keep each Sunday–Saturday balance independent. The selected end date anchors
+// the current week plus three previous weeks; no future entries are included.
+export function historicalWeekProgress(days, asOf, currentMaintenance, end = asOf) {
+  const last = end < asOf ? end : asOf;
+  const latestSunday = offsetDate(last, -new Date(`${last}T12:00:00Z`).getUTCDay());
+  const weeks = [];
+  for (let index = 3; index >= 0; index--) {
+    const start = offsetDate(latestSunday, -7 * index);
+    const saturday = offsetDate(start, 6), until = saturday < last ? saturday : last;
+    const points = currentWeekProgress(days, until, currentMaintenance);
+    for (const [date, point] of points) point.provisional = date === asOf;
+    if (points.size) weeks.push({ start, end: until, points });
+  }
+  return weeks;
+}

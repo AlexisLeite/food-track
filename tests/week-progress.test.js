@@ -67,3 +67,35 @@ test('missing registrations do not become zero-calorie deficit days',()=>{
  const chart=historyChart({start:incomplete[0].date,end:incomplete.at(-1).date,days:incomplete},'calories',{asOf:'2026-10-23',maintenance:2400});
  assert.match(chart,/Hoy: provisional/);assert.match(chart,/Faltan registros de 1 día/);assert.doesNotMatch(chart,/chart-week-provisional/);
 });
+
+test('historical balances cover at most four Sunday weeks, reset totals and exclude future days',async()=>{
+ const {historicalWeekProgress}=await import('../public/week-progress.js');
+ const start='2026-09-20';
+ const historyDays=Array.from({length:50},(_,index)=>{
+  const date=new Date(`${start}T12:00:00Z`);date.setUTCDate(date.getUTCDate()+index);
+  return day(date.toISOString().slice(0,10),date.getUTCDay()===0?1200:2400);
+ });
+ const weeks=historicalWeekProgress(historyDays,'2026-10-26',2400);
+ assert.deepEqual(weeks.map(w=>w.start),['2026-10-04','2026-10-11','2026-10-18','2026-10-25']);
+ assert.deepEqual(weeks.map(w=>w.points.size),[7,7,7,2]);
+ for(const week of weeks)assert.equal(week.points.get(week.start).consumed,1200);
+ assert.equal(weeks[3].points.get('2026-10-26').consumed,3600);
+ assert.equal(weeks[0].points.get('2026-10-10').provisional,false);
+ assert.equal(weeks[3].points.get('2026-10-26').provisional,true);
+ const past=historicalWeekProgress(historyDays,'2026-10-26',2400,'2026-10-17');
+ assert.equal(past.at(-1).start,'2026-10-11');assert.equal(past.at(-1).points.get('2026-10-17').provisional,false);
+ const chart=historyChart({start:historyDays[0].date,end:'2026-10-26',days:historyDays.filter(d=>d.date<='2026-10-26')},'calories',{asOf:'2026-10-26',maintenance:2400});
+ assert.equal((chart.match(/class="chart-week-progress"/g)||[]).length,1);
+ const red=chart.match(/<path d="([^"]*)" class="chart-week-progress"/)[1];
+ assert.equal((red.match(/M/g)||[]).length,1);
+ assert.equal((red.match(/C/g)||[]).length,22);
+ assert.equal((chart.match(/ C/g)||[]).length>=19,true);
+});
+
+test('a clipped chart uses the hidden Sunday context instead of losing the first weekly segment',()=>{
+ const balanceDays=days.slice(1);
+ const clipped=balanceDays.slice(2,6);
+ const chart=historyChart({start:clipped[0].date,end:clipped.at(-1).date,days:clipped,balanceDays},'calories',{asOf:'2026-10-23',maintenance:2400});
+ assert.match(chart,/class="chart-week-progress"/);
+ assert.match(chart,/balance registrado -8\.400 kcal/);
+});

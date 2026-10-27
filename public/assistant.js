@@ -1,3 +1,4 @@
+import { submissionHash } from './outbox.js?v=20261026-pending-1';
 let createMessageRenderer, rendererLoading;
 const loadRenderer=()=>rendererLoading ||= import('./vendor/assistant-renderer.js?v=20261023-chat-stream-1').then(module=>{createMessageRenderer=module.createMessageRenderer;});
 // Adapted from rulelab-wt AssistantWindow, assistant.css and messageKeys.
@@ -17,7 +18,7 @@ export function mealSuggestion(now = new Date()) {
   const hour = Number(new Intl.DateTimeFormat('en-GB',{timeZone:'America/Montevideo',hour:'2-digit',hourCycle:'h23'}).format(now));
   return hour < 15 ? 'Sugerime comidas para este mediodía' : 'Sugerime comidas para esta noche';
 }
-export function createAssistant({notify=()=>{}}={}) {
+export function createAssistant({notify=()=>{}, outbox}={}) {
   const host=document.createElement('div');host.id='assistant-host';host.hidden=true;
   host.innerHTML=`<section id="food-assistant" class="assistant-window" aria-label="Asistente de comida" hidden><header class="assistant-header">${chatIcon}<h2>Asistente</h2></header><div class="assistant-messages" role="log" aria-label="Conversación" aria-live="polite" aria-relevant="additions"></div><p class="assistant-status" role="status" hidden></p><form class="assistant-composer"><textarea aria-label="Mensaje al asistente" placeholder="Preguntá sobre tu alimentación…" rows="1" maxlength="8000"></textarea><button type="submit" class="assistant-send" aria-label="Enviar mensaje">${sendIcon}</button></form></section>`;
   document.body.append(host);
@@ -70,17 +71,9 @@ export function createAssistant({notify=()=>{}}={}) {
         if(turn!==generation||recording!==session)return;
         const blob=new Blob(session.chunks,{type:recorder.mimeType});releaseRecording();
         if(!blob.size||blob.size>8*1024*1024){setBusy(false);notify('Grabá un audio de hasta 8 MB.',true);return;}
-        const payload=new FormData();payload.append('audio',blob,'chat.audio');
-        controller=new AbortController();setBusy(true);status.textContent='Transcribiendo audio…';
-        try{
-          const response=await fetch('/api/transcribe',{method:'POST',credentials:'same-origin',headers:{'X-Foodtrack':'1'},body:payload,signal:controller.signal});
-          const data=await readApiResponse(response);
-          if(!response.ok)throw new Error(data.error||'No se pudo transcribir el audio.');
-          if(turn!==generation)return;
-          if(!data.text?.trim())throw new Error('No se escuchó voz. Probá de nuevo.');
-          input.value=data.text.trim();setBusy(false);form.requestSubmit();
-        }catch(error){if(turn===generation){setBusy(false);if(error.name!=='AbortError')notify(error.message,true);}}
-        finally{payload.delete('audio');}
+        setBusy(false);
+        try { await outbox.submit({kind:'chat-audio',blob,messages:[...messages]}); } catch { /* Pending audio is retained by the outbox. */ }
+
       };
       recorder.start();status.textContent='Grabando… Tocá detener para enviar.';
       session.timer=setTimeout(()=>{if(recorder.state==='recording')recorder.stop();},60000);
@@ -102,16 +95,33 @@ export function createAssistant({notify=()=>{}}={}) {
     if(busy){if(event.submitter===button)controller?.abort();return;}
     if(!input.value.trim()){await record();return;}
     const text=input.value.trim();if(!text||!identity)return;
+    try { await outbox.submit({kind:'chat',text,messages:[...messages]}); } catch { /* The outbox displays retry/delete. */ }
+  };
+  const sendPending = async (item, checkpoint, checkUser) => {
+    if(busy||recording)throw new Error('Esperá a que termine la consulta actual.');
+    await loadRenderer();checkUser();
+    if(item.blob&&!item.text){
+      controller=new AbortController();setBusy(true);status.textContent='Transcribiendo audio…';
+      try{
+        const payload=new FormData();payload.append('audio',item.blob,'chat.audio');
+        const response=await fetch('/api/transcribe',{method:'POST',credentials:'same-origin',headers:{'X-Foodtrack':'1','X-Submission-ID':await submissionHash(`${item.id}:transcribe`)},body:payload,signal:controller.signal});
+        const data=await readApiResponse(response);
+        if(!response.ok)throw new Error(data.error||'No se pudo transcribir el audio.');
+        if(!data.text?.trim())throw new Error('No se escuchó voz en el audio.');
+        checkUser();await checkpoint({text:data.text.trim()});
+      }finally{setBusy(false);}
+    }
+    const text=item.text;
     const turn=++generation;controller=new AbortController();follow=true;
-    const outgoing=[...messages,{role:'user',content:text}];
-    if(!messages.length)messagesEl.replaceChildren();addMessage('user',text);input.value='';input.style.height='auto';status.textContent='Revisando tus registros…';setBusy(true);
+    const outgoing=[...item.messages,{role:'user',content:text}];
+    if(!messages.length){messagesEl.replaceChildren();for(const previous of item.messages)addMessage(previous.role,previous.content);}addMessage('user',text);if(input.value.trim()===text)input.value='';input.style.height='auto';status.textContent='Revisando tus registros…';setBusy(true);
     let completed=false,reply=null;
     const renderReply=(text,final=false)=>{
       if(!reply)reply=addMessage('assistant','');
       final?reply.finish(text):reply.update(text);status.hidden=true;
     };
     try{
-      const response=await fetch('/api/chat',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Foodtrack':'1'},body:JSON.stringify({messages:outgoing}),signal:controller.signal});
+      const response=await fetch('/api/chat',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Foodtrack':'1','X-Submission-ID':item.id},body:JSON.stringify({messages:outgoing}),signal:controller.signal});
       if(!response.ok){const data=await readApiResponse(response);throw Object.assign(new Error(data.error||'No se pudo consultar al asistente.'),{status:response.status});}
       if(!response.headers.get('content-type')?.includes('text/event-stream'))throw new Error('El servidor no devolvió una respuesta válida. Volvé a intentarlo.');
       const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
@@ -119,21 +129,22 @@ export function createAssistant({notify=()=>{}}={}) {
         const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});let end;
         while((end=buffer.indexOf('\n\n'))>=0){
           const block=buffer.slice(0,end);buffer=buffer.slice(end+2);if(!block.startsWith('data: '))continue;
-          const data=JSON.parse(block.slice(6));if(turn!==generation)return;
+          const data=JSON.parse(block.slice(6));if(turn!==generation)throw new Error('El envío quedó pendiente al cambiar de usuario.');
           if(data.type==='status')status.textContent=data.text;
           if(data.type==='error')throw new Error(data.text);
           if(data.type==='text')renderReply(data.text);
-          if(data.type==='message'){messages=[...outgoing,{role:'assistant',content:data.text}];renderReply(data.text,true);completed=true;}
+          if(data.type==='message'){checkUser();messages=[...outgoing,{role:'assistant',content:data.text}];renderReply(data.text,true);completed=true;}
         }
       }
       if(!completed)throw new Error('Se interrumpió la respuesta. Volvé a intentarlo.');
     }catch(error){
-      if(turn!==generation)return;
+      if(turn!==generation)throw error;
       // Failed/cancelled turns do not contaminate the conversation context.
-      const item=document.createElement('p');item.className='assistant-error';item.setAttribute('role','alert');item.textContent=error.name==='AbortError'?'Consulta detenida.':error.message;messagesEl.append(item);if(!input.value.trim())input.value=text;scroll();
-      if(error.status===403)notify(error.message,true);
+      const item=document.createElement('p');item.className='assistant-error';item.setAttribute('role','alert');item.textContent=error.name==='AbortError'?'Consulta detenida.':error.message;messagesEl.append(item);scroll();
+      throw error;
     }finally{if(turn===generation){setBusy(false);focusInput();}}
   };
+  outbox?.register('chat',sendPending);outbox?.register('chat-audio',sendPending);
   window.addEventListener('pagehide',()=>{clearInterval(suggestionTimer);++generation;controller?.abort();releaseRecording();});
   empty();setBusy(false);
   return {

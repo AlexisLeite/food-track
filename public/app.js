@@ -1,17 +1,20 @@
-import { createAssistant } from './assistant.js?v=20261023-meal-suggestions-1';
+import { createOutbox, processFoodSubmission } from './outbox.js?v=20261026-pending-1';
+import { createAssistant } from './assistant.js?v=20261026-pending-1';
 import { calorieProgressMarkup } from './calorie-progress.js?v=20261023-maintenance-bar-1';
 import './dock-offset.js?v=20261023-safari-offset-16';
 import { bindDaySwipe } from './swipe.js?v=20261023-day-swipe-1';
 import { readApiResponse } from './api-response.js?v=20261023-audio-errors-1';
-import { processingMarkup, showProcessing } from './processing.js';
+import { processingMarkup } from './processing.js';
 import { getMacroPlan, getGoalProjection, getCalorieLimits, hasMacros, summarizeMeals } from './nutrition.js?v=20261019-deficit-1200-1';
-import { historyChart } from './history.js?v=20261023-red-only-1';
-import { createVoiceInput } from './voice.js?v=20261019-repeat-meal-2';
+import { historyChart } from './history.js?v=20261026-continuous-balance-1';
+import { createVoiceInput } from './voice.js?v=20261026-pending-1';
 import { createUserCache, isCancelledError } from './cache.js?v=20261020-week-allocation-1';
-const assistant = createAssistant({ notify: (message,error) => toast(message,error) });
+const outbox = createOutbox({ notify: (message,error) => toast(message,error) });
+const assistant = createAssistant({ notify: (message,error) => toast(message,error), outbox });
 const root = document.querySelector('#app');
 const dock = document.querySelector('#app-dock');
 function syncDock() {
+  outbox.setUser(user?.id || null); outbox.mount(root);
   assistant.setUser(user);
   const navigation = root.querySelector('.bottom-nav');
   const dateSelector = root.querySelector('.date-nav');
@@ -64,7 +67,7 @@ let user = null, meals = [], currentDate = localDate(), view = 'day', authMode =
 let activeMeal = null, analysisBusy = false, loadingDay = false, uploading = false;
 let noticeTimer, dayRequest = 0;
 let audioBusy = false, analysisSource = 'text';
-const voice = createVoiceInput({ api, toast, onBusyChange: value => { audioBusy = value; } });
+const voice = createVoiceInput({ toast, onBusyChange: value => { audioBusy = value; } });
 let navigationRequest = 0, pendingDate = null, transitionAnimations = [];
 let week = null;
 let loadedDate = null, dayError = '', historyError = '', historyLoading = false;
@@ -231,6 +234,7 @@ function renderHistory() {
 }
 
 function render() {
+  outbox.setUser(user?.id || null);
   root.setAttribute('aria-busy', 'false');
   if (!user) return renderAuth();
   if (view === 'settings' || !user.profile) return renderSettings();
@@ -340,21 +344,32 @@ async function preparePhoto(file) {
   } finally { URL.revokeObjectURL(url); }
 }
 async function uploadPhoto(e) {
-  const file = e.target.files[0]; if (!file) return;
-  if (uploading) return;
+  const file = e.target.files[0]; if (!file || uploading) return;
   if (file.size > 40 * 1024 * 1024) return toast('La foto supera los 40 MB.', true);
-  const date = currentDate;
-  uploading = true; renderDay();
-  dialog.innerHTML = `${modalHeader('Analizar comida')}<div class="dialog-body">${processingMarkup('photo', 'Recibiendo foto…')}</div>`; showModal();
-  try {
-    const photo = await preparePhoto(file);
-    const data = new FormData(); data.append('date', date); data.append('photo', photo, 'comida.jpg');
-    const { meal } = await api('/api/meals', { method: 'POST', body: data });
-    if (meal.date === currentDate) meals.push(meal);
-    activeMeal = meal; await runAnalysis('', 'photo', dialog.open);
-  } catch (e) { closeModal(); toast(e.message, true); }
-  finally { uploading = false; if (view === 'day' && user) render(); }
+  await submitFood({ kind: 'photo', date: currentDate, blob: file, source: 'photo' }).catch(() => {});
 }
+for (const kind of ['photo', 'meal', 'reevaluate']) outbox.register(kind, async (item, checkpoint, checkUser) => {
+  if (analysisBusy || uploading) throw new Error('Esperá a que termine el análisis actual.');
+  analysisBusy = true; analysisSource = item.source || 'text';
+  dialog.innerHTML = `${modalHeader('Analizar comida')}<div class="dialog-body">${processingMarkup(analysisSource)}</div>`; showModal();
+  let succeeded = false;
+  try {
+    const data = await processFoodSubmission(item, checkpoint, checkUser, { request: api, preparePhoto });
+    checkUser();
+    const existing = meals.some(meal => meal.id === data.meal.id);
+    if (existing) updateMeal(data.meal); else if (data.meal.date === currentDate) meals.push(data.meal);
+    activeMeal = data.meal; succeeded = true;
+    if (!dialog.open) toast('Análisis listo. Abrí la comida para elegir una opción.');
+    return data;
+  } finally {
+    analysisBusy = false;
+    if (user?.id === item.userId) {
+      if (view === 'day') render();
+      if (dialog.open) { if (succeeded) openMeal(); else closeModal(); }
+    }
+  }
+});
+async function submitFood(item) { return outbox.submit(item); }
 function modalHeader(title) {
   return `<div class="dialog-head"><h2 id="meal-title">${esc(title)}</h2><button type="button" class="modal-close" data-action="close" aria-label="Cerrar" title="Cerrar">×</button></div>`;
 }
@@ -364,12 +379,9 @@ function openDescription() {
   dialog.innerHTML = `${modalHeader('Describir comida')}<div class="dialog-body"><form id="description-form">${voice.button()}</form></div>`;
   showModal();
   const form = document.querySelector('#description-form');
-  voice.bind(form, async (description, source) => {
-    showProcessing(form, source, 'Analizando comida…');
-    const { meal } = await api('/api/meals/describe', { method: 'POST', body: { date, description } });
-    if (meal.date === currentDate) meals.push(meal);
-    activeMeal = meal; if (view === 'day') render(); await runAnalysis('', source, dialog.open);
-  });
+  voice.bind(form,
+    (text, source) => submitFood({ kind: 'meal', date, text, source }),
+    blob => submitFood({ kind: 'meal', date, blob, source: 'audio' }));
   form.querySelector('[data-action=record-audio]').focus({ preventScroll: true });
 }
 
@@ -392,7 +404,9 @@ function openMeal() {
   }
   dialog.innerHTML = `${modalHeader(m.selected ? 'Editar comida' : 'Elegir comida')}<div class="dialog-body">${m.selected && !hasMacros(m.selected) ? '<p class="description">La opción elegida no tiene macros. Reevaluá la comida y elegí una nueva opción para completarlos.</p>' : ''}${m.photoUrl ? `<img class="meal-photo" src="${m.photoUrl}" alt="Foto de tu comida">` : `<p class="description">${esc(m.description)}</p>`}${latest ? `<p class="description">${esc(latest.description)}</p>${repeatMealActions()}${optionMarkup(latest, m.selected)}${!latest.options.length ? '<p class="description">Añadí detalles para ajustar el análisis.</p>' : '<small>Elegí una opción para guardar sus calorías. Son estimaciones.</small>'}` : `<p class="description">La comida está guardada. Analizala para recibir opciones.</p>${repeatMealActions()}`}${m.analyses.length > 1 ? `<details class="history"><summary>Opciones anteriores</summary>${m.analyses.slice(1).map(a => `<p class="hint">${esc(a.instructions || 'Análisis inicial')}</p>${optionMarkup(a, m.selected)}`).join('')}</details>` : ''}<form id="reevaluate" class="reevaluate"><p class="description">${latest ? '¿Querés ajustar el análisis?' : 'Detalles de la comida (opcional)'}</p>${voice.button()}</form></div>`;
   showModal();
-  voice.bind(document.querySelector('#reevaluate'), (instructions, source) => runAnalysis(instructions, source));
+  voice.bind(document.querySelector('#reevaluate'),
+    (text, source) => submitFood({ kind: 'reevaluate', mealId: m.id, date: m.date, text, source }),
+    blob => submitFood({ kind: 'reevaluate', mealId: m.id, date: m.date, blob, source: 'audio' }));
   const picker = dialog.querySelector('#repeat-date'), repeatButton = dialog.querySelector('[data-action=repeat-meal]');
   let repeating = false;
   picker.disabled = !m.selected;
@@ -426,16 +440,6 @@ function openMeal() {
 
 }
 function updateMeal(meal) { const i = meals.findIndex(m => m.id === meal.id); if (i >= 0) { if (week) week.total += (meal.selected?.calories || 0) - (meals[i].selected?.calories || 0); meals[i] = meal; } }
-async function runAnalysis(instructions, source = 'text', present = true) {
-  if (analysisBusy || !activeMeal) return;
-  const mealId = activeMeal.id; analysisBusy = true; analysisSource = source; if (present) openMeal();
-  try {
-    const data = await api(`/api/meals/${mealId}/analyze`, { method: 'POST', body: { instructions } });
-    updateMeal(data.meal); if (activeMeal?.id === mealId) activeMeal = data.meal;
-    if (!dialog.open) toast('Análisis listo. Abrí la comida para elegir una opción.');
-  } catch (e) { toast(e.message, true); }
-  finally { analysisBusy = false; if (user && view === 'day') render(); if (dialog.open && activeMeal?.id === mealId) openMeal(); }
-}
 document.addEventListener('click', async e => {
   const button = e.target.closest('button'); if (!button || button.disabled) return;
   try {

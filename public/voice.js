@@ -3,8 +3,8 @@ const mic = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="cur
 const stop = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>';
 const textIcon = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h6"/></svg>';
 const sendIcon = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="m4 4 17 8-17 8 3-8zM7 12h14"/></svg>';
-export function createVoiceInput({ api, toast, onBusyChange }) {
-  let context = null, session = null, controller = null, generation = 0, sending = false;
+export function createVoiceInput({ toast, onBusyChange }) {
+  let context = null, session = null, generation = 0, sending = false;
   const live = ctx => context === ctx && ctx.form.isConnected && ctx.form.closest('dialog')?.open;
   function state(ctx, mode, message = '') {
     if (!ctx?.form.isConnected) return;
@@ -25,7 +25,7 @@ export function createVoiceInput({ api, toast, onBusyChange }) {
   }
   function cancel({ restore = true } = {}) {
     settleMode(context);
-    generation++; controller?.abort(); controller = null; sending = false;
+    generation++; sending = false;
     if (session) {
       const previous = session; session = null; previous.send = false;
       if (previous.recorder?.state === 'recording') previous.recorder.stop();
@@ -41,25 +41,16 @@ export function createVoiceInput({ api, toast, onBusyChange }) {
     }
     const request = ++generation; let handedOff = false;
     sending = true; onBusyChange(true); state(ctx, 'sending');
-    const abort = new AbortController(); controller = abort;
-    const payload = new FormData(); payload.append('audio', blob, 'message.audio');
     try {
-      const result = await api('/api/transcribe', { method: 'POST', body: payload, signal: abort.signal });
-      if (request !== generation || !live(ctx)) return;
-      const text = typeof result.text === 'string' ? result.text.trim() : '';
-      if (!text) throw new Error('No se escuchó voz. Probá de nuevo.');
-      if (text.length > 1500) throw new Error('El audio es demasiado largo. Grabá una descripción más corta.');
-      payload.delete('audio'); blob = null; sending = false; controller = null; onBusyChange(false);
-      // Keep the processing animation visible while the transcript becomes a meal.
-      handedOff = true; await ctx.onTranscript(text, 'audio');
-    } catch (error) {
-      handedOff = false;
-      if (request === generation && live(ctx) && !abort.signal.aborted) toast(error.message, true);
+      handedOff = true;
+      await ctx.onAudio(blob);
+    } catch {
+      handedOff = false; // The outbox keeps the audio and presents retry/delete actions.
     } finally {
-      payload.delete('audio'); blob = null;
-      if (request === generation && !handedOff) { sending = false; controller = null; state(ctx, 'idle'); onBusyChange(false); }
+      if (request === generation) { sending = false; onBusyChange(false); if (!handedOff) state(ctx, 'idle'); }
     }
   }
+
   function finish() {
     if (session?.recorder?.state !== 'recording') return;
     session.send = true; state(session.context, 'sending'); session.recorder.stop();
@@ -107,7 +98,7 @@ export function createVoiceInput({ api, toast, onBusyChange }) {
     editor.querySelectorAll('textarea,button').forEach(element => { element.disabled = true; });
     showProcessing(ctx.form, 'text', 'Analizando comida…');
     try { await ctx.onTranscript(text, 'text'); }
-    catch (error) { if (request === generation && live(ctx)) toast(error.message, true); }
+    catch { /* The outbox keeps the text and displays the failure. */ }
     finally {
       if (request === generation) {
         sending = false; onBusyChange(false);
@@ -153,7 +144,7 @@ export function createVoiceInput({ api, toast, onBusyChange }) {
   function write() { setMode(true); }
   return {
     button() { return `<div class="input-surface"><div class="input-options" data-input-options><div class="voice-control"><button type="button" class="composer-action" data-action="record-audio" aria-label="Grabar audio" title="Grabar audio">${mic}</button><p class="voice-status" data-voice-status role="status" aria-live="polite">Tocá para grabar</p></div><div class="voice-control"><button type="button" class="composer-action" data-action="write-food" aria-label="Tocá para escribir" title="Tocá para escribir">${textIcon}</button><p class="voice-status">Tocá para escribir</p></div></div><div class="text-editor" data-text-editor hidden inert aria-hidden="true"><div class="composer"><textarea data-meal-text maxlength="1500" aria-label="Descripción o corrección de la comida" placeholder="Describí la comida o lo que querés corregir…"></textarea><button type="submit" class="composer-action" aria-label="Enviar texto" title="Enviar texto">${sendIcon}</button></div><button type="button" class="text" data-action="input-options">Volver</button></div></div>`; },
-    bind(form, onTranscript) { cancel(); context = { form, onTranscript }; form.onsubmit = submitText; },
+    bind(form, onTranscript, onAudio) { cancel(); context = { form, onTranscript, onAudio }; form.onsubmit = submitText; },
     record, cancel, write, choose
   };
 }

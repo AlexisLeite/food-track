@@ -1,5 +1,5 @@
 import { smoothChartPath } from './chart-path.js?v=20261023-smooth-lines-1';
-import { currentWeekProgress } from './week-progress.js?v=20261023-smooth-lines-1';
+import { historicalWeekProgress } from './week-progress.js?v=20261026-four-weeks-1';
 const fmt = value => new Intl.NumberFormat('es-UY', { maximumFractionDigits: 1 }).format(value);
 const shortDate = date => new Intl.DateTimeFormat('es-UY', { day: 'numeric', month: 'short' }).format(new Date(`${date}T12:00:00Z`));
 const labels = { calories: 'Calorías', protein: 'Proteínas', fat: 'Grasas', carbs: 'Carbohidratos' };
@@ -16,15 +16,18 @@ export function historyChart(history, metric, { asOf = new Intl.DateTimeFormat('
   const step = Math.ceil(roughStep / power) * power, max = step * 4;
   const x = i => left + i * (width - left - right) / Math.max(1, days.length - 1);
   const y = value => top + (1 - value / max) * (height - top - bottom);
-  const weekly = metric === 'calories' ? currentWeekProgress(days,asOf,maintenance) : new Map();
-  const weeklyPoints = days.map((day,index)=>({index,...weekly.get(day.date)})).filter(point=>Number.isFinite(point.value));
-  const weeklyPath=smoothChartPath(days.map((day,index)=>{
-    const value=weekly.get(day.date)?.value;
-    return Number.isFinite(value)?{x:x(index),y:y(value)}:null;
-  }));
-  const weeklyLast=weeklyPoints.at(-1);
-  const weeklyDescription=weeklyLast ? `Semana actual: balance registrado ${fmt(weeklyLast.balance)} kcal; diferencia con el objetivo ${fmt(weeklyLast.goalDifference)} kcal${weeklyLast.provisional?'. Hoy: provisional, día incompleto':''}${weeklyLast.missingDays?`. Faltan registros de ${weeklyLast.missingDays} día(s)`:''}${weeklyLast.pendingDays?'. Hay comidas sin confirmar':''}` : '';
-  const weeklyOverlay=weeklyLast ? `<path d="${weeklyPath}" class="chart-week-progress"><title>${weeklyDescription}</title></path>${weeklyPoints.length===1?`<circle cx="${x(weeklyLast.index)}" cy="${y(weeklyLast.value)}" r="2.5" class="chart-week-progress-point"/>`:''}` : '';
+  const weeks = metric === 'calories' ? historicalWeekProgress(history.balanceDays || days, asOf, maintenance, history.end) : [];
+  const weekly = new Map(weeks.flatMap(week => [...week.points].map(([date, point]) => [date, { ...point, weekStart: week.start }])));
+  const weeklyOverlay = (() => {
+    const weeklyPoints = days.map((day,index)=>({index,...weekly.get(day.date)})).filter(point=>Number.isFinite(point.value));
+    const last = weeklyPoints.at(-1); if (!last) return '';
+    const path = smoothChartPath(days.map((day,index)=>{
+      const value = weekly.get(day.date)?.value;
+      return Number.isFinite(value)?{x:x(index),y:y(value)}:null;
+    }));
+    const description = `Semana del ${shortDate(last.weekStart)}: balance registrado ${fmt(last.balance)} kcal; diferencia con el objetivo ${fmt(last.goalDifference)} kcal${last.provisional?'. Hoy: provisional, día incompleto':''}${last.missingDays?`. Faltan registros de ${last.missingDays} día(s)`:''}${last.pendingDays?'. Hay comidas sin confirmar':''}`;
+    return `<path d="${path}" class="chart-week-progress"><title>${description}</title></path>${weeklyPoints.length===1?`<circle cx="${x(last.index)}" cy="${y(last.value)}" r="2.5" class="chart-week-progress-point"/>`:''}`;
+  })();
   const line = source => smoothChartPath(days.map((day,index)=>{
     const value=day[source]?.[metric];
     return Number.isFinite(value)?{x:x(index),y:y(value)}:null;

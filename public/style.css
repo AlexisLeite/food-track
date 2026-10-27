@@ -104,3 +104,5 @@ body.chat-section-active{height:var(--chat-page-height,100dvh)}body.chat-section
 .assistant-composer textarea:focus-visible{outline:2px solid #202020;outline-offset:-2px}
 
 .assistant-messages{padding-right:14px;scrollbar-gutter:stable}
+
+.pending-submissions{flex:0 0 auto;max-height:34dvh;overflow:auto;margin:0 0 24px;border:1px solid #e7e7e7;border-radius:8px;padding:12px 14px;font-size:14px;background:#fff}.pending-submissions summary{cursor:pointer;font-weight:600}.pending-submission{display:grid;gap:8px;padding-top:14px;margin-top:14px;border-top:1px solid #eee}.pending-submission strong{font-size:13px;font-weight:500}.pending-submission p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;max-height:100px;overflow:auto}.pending-submission img{max-width:100%;max-height:100px;object-fit:contain;justify-self:start;border-radius:5px}.pending-submission audio{width:100%;height:36px}.pending-actions{display:flex;gap:8px}.pending-actions button{font-size:13px;padding:7px 12px}.pending-actions button:last-child:hover{color:#a12626;border-color:#a12626}
