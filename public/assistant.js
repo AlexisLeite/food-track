@@ -82,10 +82,34 @@ export function createAssistant({notify=()=>{}, outbox}={}) {
   const setBusy=value=>{
     busy=value;input.disabled=!!recording;updateButton();status.hidden=!value;
   };
+  // iOS can pan the visual viewport as well as shrink it when focusing an
+  // input. Fit the chat to both coordinates; scrolling its ancestors hides the composer.
+  let viewportFrame;
   const viewport=()=>{
-    document.documentElement.style.setProperty('--chat-page-height',`${window.visualViewport?.height??window.innerHeight}px`);
+    cancelAnimationFrame(viewportFrame);
+    viewportFrame=requestAnimationFrame(()=>{
+      const visual=window.visualViewport;
+      document.documentElement.style.setProperty('--chat-page-height',`${visual?.height??window.innerHeight}px`);
+      const keyboardVisible=!!visual&&visual.height<window.innerHeight-100;
+      document.documentElement.style.setProperty('--chat-page-top',`${keyboardVisible?(visual?.offsetTop??0):0}px`);
+      document.body.classList.toggle('chat-keyboard-open',active&&keyboardVisible);
+      if(active)scroll();
+    });
   };
-  window.visualViewport?.addEventListener('resize',viewport);window.addEventListener('resize',viewport);viewport();
+  window.visualViewport?.addEventListener('resize',viewport);
+  window.visualViewport?.addEventListener('scroll',viewport);
+  window.addEventListener('resize',viewport);
+  // Safari otherwise scrolls a newly focused input toward the centre before
+  // its keyboard viewport has settled. A transparent input can still receive
+  // the user's focus, without triggering that automatic scroll animation.
+  input.addEventListener('pointerdown',event=>{
+    if(event.button!==0||document.activeElement===input||!document.documentElement.classList.contains('safari-dock-offset'))return;
+    const opacity=input.style.opacity;
+    input.style.opacity='0';
+    input.focus({preventScroll:true});
+    requestAnimationFrame(()=>{input.style.opacity=opacity;});
+  });
+  input.addEventListener('focus',viewport);input.addEventListener('blur',viewport);viewport();
   input.addEventListener('input',()=>{updateButton();input.style.height='auto';input.style.height=`${Math.min(input.scrollHeight,120)}px`;});
   input.addEventListener('keydown',event=>{if(shouldSendMessage(input.value,event)){event.preventDefault();form.requestSubmit();}});
   form.onsubmit=async event=>{
@@ -152,7 +176,7 @@ export function createAssistant({notify=()=>{}, outbox}={}) {
       const wasActive=active;
       clearInterval(suggestionTimer);
       if(active&&!slot){savedScroll=messagesEl.scrollTop;input.blur();if(recording){++generation;releaseRecording();setBusy(false);}}
-      active=!!slot&&!!identity;panel.hidden=!active;
+      active=!!slot&&!!identity;panel.hidden=!active;viewport();
       (active?slot:host).append(panel);
       if(active){
         refreshMealSuggestion();suggestionTimer=setInterval(refreshMealSuggestion,60000);

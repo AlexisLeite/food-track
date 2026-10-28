@@ -1,5 +1,5 @@
 import { createOutbox, processFoodSubmission } from './outbox.js?v=20261026-pending-1';
-import { createAssistant } from './assistant.js?v=20261026-pending-1';
+import { createAssistant } from './assistant.js?v=20261026-mobile-keyboard-2';
 import { calorieProgressMarkup } from './calorie-progress.js?v=20261023-maintenance-bar-1';
 import './dock-offset.js?v=20261023-safari-offset-16';
 import { bindDaySwipe } from './swipe.js?v=20261023-day-swipe-1';
@@ -392,7 +392,7 @@ function optionMarkup(analysis, selected) {
   }).join('')}</div>`;
 }
 function repeatMealActions() {
-  return `<div class="meal-actions"><div class="repeat-control"><button type="button" class="primary wide capture repeat-button" data-action="repeat-meal"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18M8 15h2M14 15h2"/></svg>Repetir comida</button><input type="date" id="repeat-date" aria-label="Fecha para repetir comida" tabindex="-1"></div><button type="button" class="wide delete-meal-button" data-action="delete-meal">Eliminar comida</button></div>`;
+  return `<div class="meal-actions"><div class="repeat-control"><button type="button" class="primary wide capture repeat-button" data-action="repeat-meal"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18M8 15h2M14 15h2"/></svg>Repetir comida</button><input type="date" id="repeat-date" aria-label="Fecha para repetir comida" tabindex="-1"></div><div class="repeat-confirmation" id="repeat-confirmation" hidden><p id="repeat-confirmation-label" aria-live="polite"></p><div><button type="button" class="primary" id="confirm-repeat">Confirmar</button><button type="button" id="cancel-repeat">Cancelar</button></div></div><button type="button" class="wide delete-meal-button" data-action="delete-meal">Eliminar comida</button></div>`;
 }
 function openMeal() {
   const m = activeMeal; if (!m) return;
@@ -408,12 +408,23 @@ function openMeal() {
     (text, source) => submitFood({ kind: 'reevaluate', mealId: m.id, date: m.date, text, source }),
     blob => submitFood({ kind: 'reevaluate', mealId: m.id, date: m.date, blob, source: 'audio' }));
   const picker = dialog.querySelector('#repeat-date'), repeatButton = dialog.querySelector('[data-action=repeat-meal]');
-  let repeating = false;
+  const confirmation = dialog.querySelector('#repeat-confirmation');
+  const confirmRepeat = dialog.querySelector('#confirm-repeat'), cancelRepeat = dialog.querySelector('#cancel-repeat');
+  let repeating = false, selectedRepeatDate = '';
   picker.disabled = !m.selected;
-  picker.onchange = async () => {
-    const date = picker.value;
-    if (!date || repeating) return;
-    repeating = true; repeatButton.disabled = true; picker.setAttribute('aria-busy', 'true');
+  picker.onchange = () => {
+    selectedRepeatDate = picker.value;
+    confirmation.hidden = !selectedRepeatDate;
+    if (selectedRepeatDate) {
+      const label = new Intl.DateTimeFormat('es-UY', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${selectedRepeatDate}T12:00:00Z`));
+      dialog.querySelector('#repeat-confirmation-label').textContent = `¿Repetir la comida para el ${label}?`;
+    }
+  };
+  cancelRepeat.onclick = () => { if (!repeating) { selectedRepeatDate = ''; picker.value = ''; confirmation.hidden = true; } };
+  confirmRepeat.onclick = async () => {
+    const date = selectedRepeatDate;
+    if (!date || repeating || !picker.isConnected || !dialog.open) return;
+    repeating = true; confirmRepeat.disabled = true; cancelRepeat.disabled = true; repeatButton.disabled = true; picker.setAttribute('aria-busy', 'true');
     picker.disabled = true;
     const identity = user?.id, navigation = navigationRequest;
     try {
@@ -433,7 +444,7 @@ function openMeal() {
       }
     } catch (error) { toast(error.message, true); }
     finally {
-      repeating = false; repeatButton.disabled = false; picker.removeAttribute('aria-busy');
+      repeating = false; confirmRepeat.disabled = false; cancelRepeat.disabled = false; repeatButton.disabled = false; picker.removeAttribute('aria-busy');
       picker.disabled = false;
     }
   };
