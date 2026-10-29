@@ -1,3 +1,4 @@
+import { appendProfileVersion } from './profile-versions.js';
 import { mkdir } from 'node:fs/promises';
 import { backup } from 'node:sqlite';
 import path from 'node:path';
@@ -16,7 +17,8 @@ export async function migrateCaloriePolicy(db, dataDir, date = today()) {
   try {
     for (const user of updates) {
       db.prepare('UPDATE users SET profile=? WHERE id=?').run(user.profile, user.id);
-      db.prepare('INSERT OR REPLACE INTO profile_goals VALUES(?,?,?)').run(user.id, date, user.profile);
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='profile_versions'").get()) appendProfileVersion(db, user.id, user.profile, date);
+      else db.prepare('INSERT OR REPLACE INTO profile_goals VALUES(?,?,?)').run(user.id, date, user.profile);
     }
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }

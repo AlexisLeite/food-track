@@ -1,3 +1,4 @@
+import { migrateProfileVersions, appendProfileVersion } from './profile-versions.js';
 import { submissionHandler, submissionReceipt } from './submissions.js';
 import { runAssistant, validateMessages } from './assistant.js';
 import { migrateCodexAccess } from './codex-access.js';
@@ -17,7 +18,7 @@ import { analyzePhoto, analyzeDescription, validateAnalysis } from './codex.js';
 import { transcribeAudio } from './audio.js';
 import { summarizeMeals } from '../public/nutrition.js';
 import { migrateCaloriePolicy } from './calorie-policy.js';
-import { buildHistory, dateOffset, buildWeek, weekRange } from './history.js';
+import { buildHistory, dateOffset, buildWeek, weekRange, profileAt } from './history.js';
 
 const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -36,11 +37,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     CREATE TABLE IF NOT EXISTS profile_goals(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, date TEXT NOT NULL, profile TEXT NOT NULL, PRIMARY KEY(user_id,date));
     PRAGMA user_version=1;`);
   await migrateCodexAccess(db, dataDir);
-  // Seed the earliest known goal for existing accounts; earlier goals are unknown.
-  for (const user of db.prepare('SELECT id,profile FROM users WHERE profile IS NOT NULL').all()) {
-    const profile = JSON.parse(user.profile);
-    db.prepare('INSERT OR IGNORE INTO profile_goals VALUES (?,?,?)').run(user.id, validDate(profile.startDate) ? profile.startDate : today(), user.profile);
-  }
+  await migrateProfileVersions(db, dataDir);
   await migrateCaloriePolicy(db, dataDir);
   const app = express();
   app.disable('x-powered-by');
@@ -126,7 +123,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     if (activeChats.has(req.user.id) || activeChats.size >= 2) throw fail(429, 'El asistente está ocupado. Esperá un momento.');
     const asOf = today(), start = dateOffset(asOf, -89);
     const meals = db.prepare('SELECT date,selected FROM meals WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, asOf);
-    const goals = db.prepare('SELECT date,profile FROM profile_goals WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, asOf);
+    const goals = db.prepare('SELECT date,profile FROM profile_timeline WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, asOf);
     const profile = req.user.profile ? withMacroPlan(JSON.parse(req.user.profile)) : null;
     const recent = meals.filter(meal => meal.date >= start);
     const context = { today: asOf, timeZone: 'America/Montevideo', localTime: new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Montevideo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date()), profile, week: profile ? buildWeek({ date: asOf, asOf, meals, goals, profile }) : null,
@@ -162,12 +159,14 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     let profile;
     try { profile = calculateProfile(req.body); } catch (e) { throw fail(400, e.message); }
     const encoded = JSON.stringify(profile);
+    let versionId;
     db.exec('BEGIN IMMEDIATE');
     try {
       db.prepare('UPDATE users SET profile=? WHERE id=?').run(encoded, req.user.id);
-      db.prepare('INSERT INTO profile_goals VALUES (?,?,?) ON CONFLICT(user_id,date) DO UPDATE SET profile=excluded.profile').run(req.user.id, today(), encoded);
+      versionId = appendProfileVersion(db, req.user.id, encoded);
       db.exec('COMMIT');
     } catch (e) { db.exec('ROLLBACK'); throw e; }
+    logExecution('profile_configuration_saved', { userId: req.user.id, versionId, effectiveDate: today() });
     res.json({ profile });
   });
   function ownedMeal(req) {
@@ -197,8 +196,9 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     const totals = summarizeMeals(meals);
     const { start, end } = weekRange(req.query.date);
     const weekMeals = db.prepare('SELECT date,selected FROM meals WHERE user_id=? AND date BETWEEN ? AND ?').all(req.user.id, start, end);
-    const goals = db.prepare('SELECT date,profile FROM profile_goals WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, end);
-    const week = buildWeek({ date: req.query.date, asOf: today(), meals: weekMeals, goals, profile: req.user.profile ? JSON.parse(req.user.profile) : null });
+    const goals = db.prepare('SELECT date,profile FROM profile_timeline WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, end);
+    const effectiveProfile = profileAt(goals, req.query.date);
+    const week = { ...buildWeek({ date: req.query.date, asOf: today(), meals: weekMeals, goals, profile: effectiveProfile }), profile: withMacroPlan(effectiveProfile) };
     sendVersioned(req, res, { meals, week, total: totals.calories, macros: { protein: totals.protein, fat: totals.fat, carbs: totals.carbs, missingMeals: totals.missingMacros } });
   });
   app.get('/api/history', (req, res) => {
@@ -209,7 +209,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     if (!validDate(start)) throw fail(400, 'Período inválido.');
     const rangeStart = weekRange(start).start, rangeEnd = weekRange(end).end;
     const meals = db.prepare('SELECT date,selected FROM meals WHERE user_id=? AND date BETWEEN ? AND ? ORDER BY date').all(req.user.id, rangeStart, rangeEnd);
-    const goals = db.prepare('SELECT date,profile FROM profile_goals WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, rangeEnd);
+    const goals = db.prepare('SELECT date,profile FROM profile_timeline WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, rangeEnd);
     const history = buildHistory({ start, end, meals, goals, asOf: today() });
     history.balanceDays = start === rangeStart ? history.days : buildHistory({ start: rangeStart, end, meals, goals, asOf: today() }).days;
     sendVersioned(req, res, history);

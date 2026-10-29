@@ -4,6 +4,14 @@ export function dateOffset(date, offset) {
   value.setUTCDate(value.getUTCDate() + offset);
   return value.toISOString().slice(0, 10);
 }
+export function profileAt(goals, date) {
+  let profile = null;
+  for (const goal of [...goals].sort((a,b)=>a.date.localeCompare(b.date))) {
+    if (goal.date > date) break;
+    profile = JSON.parse(goal.profile);
+  }
+  return profile;
+}
 function buildBaseHistory({ start, end, meals, goals }) {
   const grouped = new Map();
   for (const meal of meals) {
@@ -35,18 +43,20 @@ export function weekRange(date) {
 }
 export function buildWeek({ date, meals, goals, profile, asOf = date }) {
   const { start, end } = weekRange(date);
-  const history = buildBaseHistory({ start, end, meals, goals });
-  const target = history.days.reduce((sum, day) => sum + (day.target?.calories ?? profile?.dailyCalories ?? 0), 0);
-  const dailyMaintenance = history.days.map(day => day.maintenance?.calories ?? profile?.expenditure);
+  // Project the week using only configurations known on the allocation date.
+  // A change on Thursday must not change what Monday's weekly budget was.
+  const allocationDate = date > asOf ? (asOf < start ? start : asOf) : date;
+  const effectiveGoals = goals.filter(goal => goal.date <= allocationDate);
+  const history = buildBaseHistory({ start, end, meals, goals: effectiveGoals });
+  const target = history.days.reduce((sum, day) => sum + (day.target?.calories ?? (!goals.length ? profile?.dailyCalories : 0) ?? 0), 0);
+  const dailyMaintenance = history.days.map(day => day.maintenance?.calories ?? (!goals.length ? profile?.expenditure : undefined));
   const maintenance = dailyMaintenance.every(Number.isFinite) ? dailyMaintenance.reduce((sum, calories) => sum + calories, 0) : null;
   // Future days share today's allocation; future weeks begin their own Sunday.
-  const allocationDate = date > asOf ? (asOf < start ? start : asOf) : date;
   const consumedBeforeDate = history.days.filter(day => day.date < allocationDate).reduce((sum, day) => sum + (day.actual.calories ?? 0), 0);
   const daysRemaining = Math.round((Date.parse(end) - Date.parse(allocationDate)) / 86400000) + 1;
   const remaining = target - consumedBeforeDate;
   const rawDailyCalories = remaining / daysRemaining;
-  const allocationGoal = [...goals].sort((a, b) => b.date.localeCompare(a.date)).find(goal => goal.date <= allocationDate);
-  const allocationProfile = allocationGoal ? JSON.parse(allocationGoal.profile) : profile;
+  const allocationProfile = profileAt(effectiveGoals, allocationDate) || profile;
   const minimumDailyCalories = getCalorieLimits(allocationProfile || {}).minimum;
   return { start, end,
     total: history.days.reduce((sum, day) => sum + (day.actual.calories ?? 0), 0),

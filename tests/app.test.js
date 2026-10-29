@@ -177,7 +177,7 @@ test('history preserves goal changes and distinguishes missing data from zero', 
   { date: '2026-10-19', selected: selected({ calories: 150 }) }
  ] });
  assert.equal(history.days[0].target, null); assert.equal(history.days[0].actual.calories, null);
- assert.equal(history.days[1].target.calories, 7000); assert.equal(history.days[1].actual.calories, 300); assert.equal(history.days[1].actual.protein, 15);
+ assert.equal(history.days[1].target.calories, 2000); assert.equal(history.days[1].actual.calories, 300); assert.equal(history.days[1].actual.protein, 15);
  assert.equal(history.days[2].actual.calories, null); assert.equal(history.days[2].pendingMeals, 1);
  assert.equal(history.days[3].actual.calories, 0); assert.equal(history.days[3].target.calories, 1800);
  assert.equal(history.days[4].actual.calories, 150); assert.equal(history.days[4].actual.protein, null);
@@ -187,14 +187,14 @@ test('weekly totals use Sunday to Saturday and preserve daily goal changes', () 
  const profile = { weight: 80, targetWeight: 75, dailyCalories: 2000 };
  assert.deepEqual(weekRange('2027-01-02'), { start: '2026-12-27', end: '2027-01-02' });
  assert.deepEqual(weekRange('2027-01-03'), { start: '2027-01-03', end: '2027-01-09' });
- const summary = buildWeek({ date: '2026-10-18', profile, goals: [{ date: '2026-10-21', profile: JSON.stringify({ ...profile, dailyCalories: 1800 }) }], meals: [
+ const summary = buildWeek({ date: '2026-10-18', profile, goals: [{ date: '2026-10-18', profile: JSON.stringify(profile) }, { date: '2026-10-21', profile: JSON.stringify({ ...profile, dailyCalories: 1800 }) }], meals: [
   { date: '2026-10-17', selected: JSON.stringify({ calories: 9999 }) },
   { date: '2026-10-18', selected: JSON.stringify({ calories: 300 }) },
   { date: '2026-10-21', selected: null },
   { date: '2026-10-24', selected: JSON.stringify({ calories: 700 }) },
   { date: '2026-10-25', selected: JSON.stringify({ calories: 9999 }) }
  ] });
- assert.deepEqual(summary, { start: '2026-10-18', end: '2026-10-24', total: 1000, target: 13200, maintenance: null, consumedBeforeDate: 0, daysRemaining: 7, remaining: 13200, rawDailyCalories: 13200 / 7, dailyCalories: 1886, minimumDailyCalories: 0, limited: false });
+ assert.deepEqual(summary, { start: '2026-10-18', end: '2026-10-24', total: 1000, target: 14000, maintenance: null, consumedBeforeDate: 0, daysRemaining: 7, remaining: 14000, rawDailyCalories: 2000, dailyCalories: 2000, minimumDailyCalories: 0, limited: false });
 });
 
 test('projections show deadline weight and time to goal for loss, gain and maintenance', () => {
