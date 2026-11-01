@@ -1,101 +1,62 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { currentWeekProgress } from '../public/week-progress.js';
+import { rollingWeekProgress } from '../public/week-progress.js';
 import { historyChart } from '../public/history.js';
-const day=(date,calories)=>({date,actual:{calories},target:{calories:1800},maintenance:{calories:2400},meals:calories===null?0:1,pendingMeals:0});
-const days=[day('2026-10-17',90000),...Array.from({length:7},(_,i)=>day(`2026-10-${18+i}`,i<6?1000:80000))];
+const offset = (date, n) => new Date(Date.parse(`${date}T12:00:00Z`) + n * 86400000).toISOString().slice(0,10);
+const day = (date, calories) => ({date, actual:{calories}, target:{calories:1800}, maintenance:{calories:2400}, meals:calories===null?0:1, pendingMeals:0});
+const days = Array.from({length:40},(_,i)=>day(offset('2026-10-01',i),1800));
 
-test('weekly ratio starts Sunday, excludes other weeks and future days, and uses maintenance as its 100% reference',()=>{
- const points=currentWeekProgress(days,'2026-10-23',2400);
- assert.equal(points.size,6);assert.equal(points.has('2026-10-17'),false);assert.equal(points.has('2026-10-24'),false);
- assert.equal(points.get('2026-10-18').consumed,1000);
- assert.equal(points.get('2026-10-23').consumed,6000);
- assert.equal(points.get('2026-10-23').maintenance,14400);
- assert.equal(points.get('2026-10-23').ratio,6000/14400);
- assert.equal(points.get('2026-10-23').value,1000);
- const full=days.slice(1).map(d=>({...d,actual:{calories:2400}}));
- assert.equal(currentWeekProgress(full,'2026-10-24',2400).get('2026-10-24').value,2400);
- assert.equal(currentWeekProgress(days,'2026-10-25',2400).size,0);
+test('each point includes exactly seven calendar days and does not reset on Sunday',()=>{
+ const input=days.map(d=>({...d,actual:{calories:d.date==='2026-10-26'?9000:1800}}));
+ const points=rollingWeekProgress(input,'2026-11-02');
+ assert.equal(points.get('2026-11-01').consumed,9000+6*1800);
+ assert.equal(points.get('2026-11-01').start,'2026-10-26');
+ assert.equal(points.get('2026-11-02').consumed,7*1800);
+ assert.equal(points.get('2026-11-01').maintenance,7*2400);
+ assert.equal(points.get('2026-11-02').provisional,true);
+ assert.equal(points.has('2026-11-03'),false);
 });
 
-test('adding the red overlay leaves every existing line, axis, tick, table and label identical',()=>{
- const history={start:days[0].date,end:days.at(-1).date,days};
- const original=historyChart(history,'calories',{asOf:'2026-10-11',maintenance:2400});
- const enhanced=historyChart(history,'calories',{asOf:'2026-10-23',maintenance:2400});
- const stripped=enhanced.replace(/<path d="[^"]*" class="chart-week-progress(?: chart-week-provisional)?"><title>[^<]*<\/title><\/path>/g,'').replace(/<circle[^>]*class="chart-week-progress-point"\/>/,'');
+test('rolling goal and maintenance anchors respect changes in configuration',()=>{
+ for(const source of ['target','maintenance']){
+  const input=days.map((d,i)=>({...d,target:{calories:1500+i*10},maintenance:{calories:2300+i*10},actual:{calories:source==='target'?1500+i*10:2300+i*10}}));
+  const points=rollingWeekProgress(input,'2026-11-01');
+  for(const [date,point] of points){
+   const entry=input.find(d=>d.date===date);
+   assert.ok(Math.abs(point.value-entry[source].calories)<1e-8);
+  }
+ }
+});
+
+test('missing days are excluded rather than counted as zero and pending meals are identified',()=>{
+ const input=days.map(d=>({...d,actual:{calories:d.date==='2026-10-28'?null:2400},pendingMeals:d.date==='2026-10-29'?1:0}));
+ const points=rollingWeekProgress(input,'2026-11-01');
+ const last=points.get('2026-11-01');
+ assert.equal(last.missingDays,1);assert.equal(last.pendingDays,1);
+ assert.equal(last.consumed,6*2400);assert.equal(last.balance,0);assert.equal(last.value,2400);
+ assert.equal(points.has('2026-10-28'),false);
+});
+
+test('overlay covers at most 28 days and respects a selected historical end date',()=>{
+ const points=rollingWeekProgress(days,'2026-11-05',undefined,'2026-11-01');
+ assert.equal(points.size,28);
+ assert.equal(points.keys().next().value,'2026-10-05');
+ assert.equal([...points.keys()].at(-1),'2026-11-01');
+ assert.equal(points.get('2026-11-01').provisional,false);
+});
+
+test('clipped chart includes hidden six-day context and remains continuous across Sunday',()=>{
+ const visible=days.filter(d=>d.date>='2026-10-30' && d.date<='2026-11-02');
+ const history={start:visible[0].date,end:visible.at(-1).date,days:visible,balanceDays:days};
+ const chart=historyChart(history,'calories',{asOf:'2026-11-02'});
+ assert.match(chart,/balance registrado -4\.200 kcal/);
+ assert.match(chart,/Últimos 7 días/);
+ assert.match(chart,/Balance últimos 7 días/);
+ const path=chart.match(/<path d="([^"]*)" class="chart-week-progress"/)[1];
+ assert.equal((path.match(/M/g)||[]).length,1);
+ assert.equal((path.match(/C/g)||[]).length,3);
+ assert.doesNotMatch(historyChart(history,'protein',{asOf:'2026-11-02'}),/chart-week-progress/);
+ const original=historyChart(history,'calories',{asOf:'2026-09-01'});
+ const stripped=chart.replace(/<path d="[^"]*" class="chart-week-progress"><title>[^<]*<\/title><\/path>/g,'');
  assert.equal(stripped,original);
- assert.equal((enhanced.match(/<figure/g)||[]).length,1);
- assert.doesNotMatch(historyChart(history,'protein',{asOf:'2026-10-23',maintenance:2400}),/chart-week-progress/);
-});
-
-test('Sunday is a point, Monday connects two days, and no weekly line can exceed seven days',()=>{
- const history={start:days[0].date,end:days.at(-1).date,days};
- for(const[date,count,point]of[['2026-10-18',0,true],['2026-10-19',1,false],['2026-10-24',6,false]]){
-  const chart=historyChart(history,'calories',{asOf:date,maintenance:2400});
-  const paths=[...chart.matchAll(/<path d="([^"]*)" class="chart-week-progress(?: chart-week-provisional)?"/g)].map(match=>match[1]).join(' ');
-  assert.equal((paths.match(/C/g)||[]).length,count);
-  assert.equal(chart.includes('class="chart-week-progress-point"'),point);
- }
- assert.equal(currentWeekProgress(days.slice(2),'2026-10-23',2400).size,0);
-});
-
-test('eating maintenance stays on the green line every day, including Friday instead of falsely indicating a deficit',()=>{
- const balanced=days.slice(1).map(d=>({...d,actual:{calories:2400}}));
- const points=currentWeekProgress(balanced,'2026-10-23',2400);
- for(const point of points.values()){assert.equal(point.ratio,1);assert.equal(point.balance,0);assert.equal(point.value,2400);}
- assert.equal(points.get('2026-10-23').maintenance,6*2400);
- assert.equal(points.get('2026-10-23').provisional,true);
- assert.equal(points.get('2026-10-22').provisional,false);
-});
-
-test('following changing daily goals coincides with the grey line, while surplus remains above maintenance',()=>{
- for(const targets of [[1800,1700,1600,1500,1400,1300,1300],[2800,2900,3000,3100,3200,3300,3300]]){
-  const onGoal=days.slice(1).map((d,i)=>({...d,target:{calories:targets[i]},actual:{calories:targets[i]}}));
-  const progress=currentWeekProgress(onGoal,'2026-10-23',2400);
-  for(let i=0;i<6;i++)assert.ok(Math.abs(progress.get(onGoal[i].date).value-targets[i])<1e-8);
- }
- const over=days.slice(1).map(d=>({...d,actual:{calories:2600}}));
- for(const point of currentWeekProgress(over,'2026-10-23',2400).values()){assert.ok(point.value>2400);assert.ok(point.balance>0);}
-});
-
-test('missing registrations do not become zero-calorie deficit days',()=>{
- const incomplete=days.slice(1).map((d,i)=>({...d,actual:{calories:i===0?null:2400}}));
- const points=currentWeekProgress(incomplete,'2026-10-23',2400);
- assert.equal(points.has('2026-10-18'),false);
- const last=points.get('2026-10-23');assert.equal(last.missingDays,1);assert.equal(last.balance,0);assert.equal(last.value,2400);
- assert.equal(last.maintenance,5*2400);
- const chart=historyChart({start:incomplete[0].date,end:incomplete.at(-1).date,days:incomplete},'calories',{asOf:'2026-10-23',maintenance:2400});
- assert.match(chart,/Hoy: provisional/);assert.match(chart,/Faltan registros de 1 día/);assert.doesNotMatch(chart,/chart-week-provisional/);
-});
-
-test('historical balances cover at most four Sunday weeks, reset totals and exclude future days',async()=>{
- const {historicalWeekProgress}=await import('../public/week-progress.js');
- const start='2026-09-20';
- const historyDays=Array.from({length:50},(_,index)=>{
-  const date=new Date(`${start}T12:00:00Z`);date.setUTCDate(date.getUTCDate()+index);
-  return day(date.toISOString().slice(0,10),date.getUTCDay()===0?1200:2400);
- });
- const weeks=historicalWeekProgress(historyDays,'2026-10-26',2400);
- assert.deepEqual(weeks.map(w=>w.start),['2026-10-04','2026-10-11','2026-10-18','2026-10-25']);
- assert.deepEqual(weeks.map(w=>w.points.size),[7,7,7,2]);
- for(const week of weeks)assert.equal(week.points.get(week.start).consumed,1200);
- assert.equal(weeks[3].points.get('2026-10-26').consumed,3600);
- assert.equal(weeks[0].points.get('2026-10-10').provisional,false);
- assert.equal(weeks[3].points.get('2026-10-26').provisional,true);
- const past=historicalWeekProgress(historyDays,'2026-10-26',2400,'2026-10-17');
- assert.equal(past.at(-1).start,'2026-10-11');assert.equal(past.at(-1).points.get('2026-10-17').provisional,false);
- const chart=historyChart({start:historyDays[0].date,end:'2026-10-26',days:historyDays.filter(d=>d.date<='2026-10-26')},'calories',{asOf:'2026-10-26',maintenance:2400});
- assert.equal((chart.match(/class="chart-week-progress"/g)||[]).length,1);
- const red=chart.match(/<path d="([^"]*)" class="chart-week-progress"/)[1];
- assert.equal((red.match(/M/g)||[]).length,1);
- assert.equal((red.match(/C/g)||[]).length,22);
- assert.equal((chart.match(/ C/g)||[]).length>=19,true);
-});
-
-test('a clipped chart uses the hidden Sunday context instead of losing the first weekly segment',()=>{
- const balanceDays=days.slice(1);
- const clipped=balanceDays.slice(2,6);
- const chart=historyChart({start:clipped[0].date,end:clipped.at(-1).date,days:clipped,balanceDays},'calories',{asOf:'2026-10-23',maintenance:2400});
- assert.match(chart,/class="chart-week-progress"/);
- assert.match(chart,/balance registrado -8\.400 kcal/);
 });

@@ -207,11 +207,12 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     if (!validDate(end) || ![7,30,90].includes(length)) throw fail(400, 'Elegí un período de 7, 30 o 90 días y una fecha válida.');
     const start = dateOffset(end, 1 - length);
     if (!validDate(start)) throw fail(400, 'Período inválido.');
-    const rangeStart = weekRange(start).start, rangeEnd = weekRange(end).end;
+    const balanceStart = dateOffset(start, -6);
+    const rangeStart = weekRange(balanceStart).start, rangeEnd = weekRange(end).end;
     const meals = db.prepare('SELECT date,selected FROM meals WHERE user_id=? AND date BETWEEN ? AND ? ORDER BY date').all(req.user.id, rangeStart, rangeEnd);
     const goals = db.prepare('SELECT date,profile FROM profile_timeline WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, rangeEnd);
     const history = buildHistory({ start, end, meals, goals, asOf: today() });
-    history.balanceDays = start === rangeStart ? history.days : buildHistory({ start: rangeStart, end, meals, goals, asOf: today() }).days;
+    history.balanceDays = buildHistory({ start: balanceStart, end, meals, goals, asOf: today() }).days;
     sendVersioned(req, res, history);
   });
   const withSubmission = submissionHandler(db, { authorizeReplay: req => {

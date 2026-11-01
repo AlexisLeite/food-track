@@ -6,7 +6,7 @@ import { bindDaySwipe } from './swipe.js?v=20261023-day-swipe-1';
 import { readApiResponse } from './api-response.js?v=20261023-audio-errors-1';
 import { processingMarkup } from './processing.js';
 import { getMacroPlan, getGoalProjection, getCalorieLimits, hasMacros, summarizeMeals } from './nutrition.js?v=20261019-deficit-1200-1';
-import { historyChart } from './history.js?v=20261026-continuous-balance-1';
+import { historyChart } from './history.js?v=20261101-rolling-1';
 import { createVoiceInput } from './voice.js?v=20261026-pending-1';
 import { createUserCache, isCancelledError } from './cache.js?v=20261020-week-allocation-1';
 const outbox = createOutbox({ notify: (message,error) => toast(message,error) });

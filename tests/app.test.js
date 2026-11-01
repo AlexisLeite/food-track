@@ -90,6 +90,9 @@ test('account isolation, persistent options, totals, retry and session revocatio
    assert.equal(monday.body.week.dailyCalories, Math.round((maintain.body.profile.dailyCalories * 7 - 100) / 6));
    const mondayHistory = await request('/api/history?days=7&end=2026-10-19', { cookie: a });
    assert.equal(mondayHistory.body.days.at(-1).target.calories, monday.body.week.dailyCalories);
+   assert.equal(mondayHistory.body.balanceDays[0].date, '2026-10-07');
+   assert.equal(mondayHistory.body.balanceDays.length, 13);
+   assert.deepEqual(mondayHistory.body.balanceDays.slice(-7), mondayHistory.body.days);
    assert.equal((await request('/api/day?date=2026-10-19', { cookie: b })).body.week.total, 0);
    assert.deepEqual(initialDay.macros, { protein: 10, fat: 2, carbs: 10, missingMeals: 0 });
    assert.equal((await request('/api/day?date=2026-10-18', { cookie: b })).body.total, 0);
