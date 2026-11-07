@@ -88,7 +88,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
   const publicUser = user => ({ id: user.id, username: user.username, theme: user.theme || 'dark', canChat: user.enable_codex_extraction === 1, canViewStatistics: canViewStatistics(user), profile: user.profile ? withMacroPlan(JSON.parse(user.profile)) : null });
   const credentials = req => {
     const { username, password } = req.body || {};
-    if (typeof username !== 'string' || !/^[a-zA-Z0-9_.-]{3,32}$/.test(username) || typeof password !== 'string' || password.length < 10 || password.length > 128) throw fail(400, 'Usá un usuario de 3 a 32 letras, números, puntos o guiones y una contraseña de 10 a 128 caracteres.');
+    if (typeof username !== 'string' || !/^[a-zA-Z0-9_.-]{3,32}$/.test(username) || typeof password !== 'string' || password.length < (req.path === '/api/register' ? 10 : 1) || password.length > 128) throw fail(400, 'Usá un usuario de 3 a 32 letras, números, puntos o guiones y una contraseña de 10 a 128 caracteres.');
     return { username: username.toLowerCase(), password };
   };
   app.post('/api/register', authLimit, async (req, res) => {
@@ -124,6 +124,25 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     res.json(tokenStatistics(db, days));
   });
   app.get('/api/me', (req, res) => res.json({ user: publicUser(req.user), today: today() }));
+  app.put('/api/password', authLimit, async (req, res) => {
+    const { currentPassword, newPassword, confirmPassword } = req.body || {};
+    if (typeof currentPassword !== 'string' || !currentPassword.length || currentPassword.length > 128) throw fail(400, 'Ingresá tu contraseña actual.');
+    if (typeof newPassword !== 'string' || newPassword.length < 10 || newPassword.length > 128) throw fail(400, 'La nueva contraseña debe tener entre 10 y 128 caracteres.');
+    if (newPassword !== confirmPassword) throw fail(400, 'La nueva contraseña y la confirmación no coinciden.');
+    const [salt, encoded] = req.user.password.split(':');
+    const derived = Buffer.from(await scrypt(currentPassword, salt, 64));
+    if (!timingSafeEqual(Buffer.from(encoded, 'hex'), derived)) throw fail(400, 'La contraseña actual no es correcta.');
+    const newSalt = randomBytes(16).toString('hex');
+    const password = `${newSalt}:${Buffer.from(await scrypt(newPassword, newSalt, 64)).toString('hex')}`;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = db.prepare('UPDATE users SET password=? WHERE id=? AND password=?').run(password, req.user.id, req.user.password);
+      if (!result.changes) throw fail(400, 'La contraseña cambió mientras enviabas la solicitud. Volvé a intentarlo.');
+      db.prepare('DELETE FROM sessions WHERE user_id=? AND token<>?').run(req.user.id, req.sessionHash);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    res.json({ ok:true });
+  });
   app.put('/api/preferences', (req, res) => {
     const theme = req.body?.theme;
     if (!['dark', 'light'].includes(theme)) throw fail(400, 'Elegí un tema oscuro o claro.');
