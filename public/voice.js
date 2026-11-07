@@ -96,7 +96,7 @@ export function createVoiceInput({ toast, onBusyChange }) {
     const request = ++generation, editor = ctx.form.querySelector('[data-text-editor]');
     sending = true; onBusyChange(true);
     editor.querySelectorAll('textarea,button').forEach(element => { element.disabled = true; });
-    showProcessing(ctx.form, 'text', 'Analizando comida…');
+    showProcessing(ctx.form, 'text', ctx.form.dataset.processingLabel || 'Analizando comida…');
     try { await ctx.onTranscript(text, 'text'); }
     catch { /* The outbox keeps the text and displays the failure. */ }
     finally {

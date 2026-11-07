@@ -20,11 +20,11 @@ test('policy migration backs up old goals and updates only the current profile a
   const previousPolicy = { ...legacy, expenditure:2497, requestedCalories:847, dailyCalories:1500, caloriePolicyVersion:4 };
   db.prepare('INSERT INTO users VALUES(?,?)').run('b',JSON.stringify(previousPolicy));
   assert.equal(await migrateCaloriePolicy(db,dir,'2026-10-19'),2);
-  assert.equal(JSON.parse(db.prepare("SELECT profile FROM users WHERE id='b'").get().profile).dailyCalories,1297);
+  assert.equal(JSON.parse(db.prepare("SELECT profile FROM users WHERE id='b'").get().profile).dailyCalories,2248);
   const current=JSON.parse(db.prepare("SELECT profile FROM users WHERE id='a'").get().profile);
-  assert.equal(current.dailyCalories,1511);assert.equal(current.startDate,'2026-10-18');assert.equal(current.targetDate,legacy.targetDate);
+  assert.equal(current.dailyCalories,2440);assert.equal(current.startDate,'2026-10-18');assert.equal(current.targetDate,legacy.targetDate);
   assert.equal(JSON.parse(db.prepare("SELECT profile FROM profile_goals WHERE user_id='a' AND date='2026-10-18'").get().profile).dailyCalories,2211);
-  assert.equal(JSON.parse(db.prepare("SELECT profile FROM profile_goals WHERE user_id='a' AND date='2026-10-19'").get().profile).dailyCalories,1511);
+  assert.equal(JSON.parse(db.prepare("SELECT profile FROM profile_goals WHERE user_id='a' AND date='2026-10-19'").get().profile).dailyCalories,2440);
   assert.equal(db.prepare('SELECT selected FROM meals').get().selected,'original selection');
   const files=await readdir(join(dir,'backups'));assert.equal(files.length,1);
   const snapshot=new DatabaseSync(join(dir,'backups',files[0]),{readOnly:true});try{assert.equal(JSON.parse(snapshot.prepare("SELECT profile FROM users WHERE id='a'").get().profile).dailyCalories,2211);}finally{snapshot.close();}

@@ -41,8 +41,13 @@ export function getGoalProjection({ weight, targetWeight, expenditure, dailyCalo
   };
 }
 
-export const caloriePolicyVersion = 5;
-export function getCalorieLimits({ expenditure }) {
+export const caloriePolicyVersion = 6;
+export const defaultMaxDailyDeficitPercent = 10;
+// User-selected product ceiling; not a universal medical recommendation.
+export const maxDailyDeficitPercent = 40;
+export const activityFactors = { sedentary: 1.2, light: 1.375, moderate: 1.55, active: 1.725, very_active: 1.9 };
+export const dailyActivityFactors = { sedentary: 1.2, standing: 1.375, physical: 1.55 };
+export function getCalorieLimits({ expenditure, maxDailyDeficitPercent: percent }) {
   if (!Number.isFinite(expenditure)) return { minimum: 0, maximum: Infinity };
-  return { minimum: Math.max(0, expenditure - 1200), maximum: expenditure + 500 };
+  return { minimum: Math.max(0, Number.isFinite(percent) ? Math.ceil(expenditure * (1 - percent / 100)) : expenditure - 1200), maximum: expenditure + 500 };
 }

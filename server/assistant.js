@@ -1,3 +1,4 @@
+import { startTokenExecution } from './token-usage.js';
 import { spawn } from 'node:child_process';
 import { mkdtemp, copyFile, writeFile, rm } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
@@ -18,6 +19,8 @@ export function assistantPrompt(context, messages) {
 export async function runAssistant({ context, messages, signal, onStatus = () => {}, onText = () => {} }) {
   const log = executionLogger('assistant_execution', { model: CHAT_MODEL });
   const dir = await mkdtemp(join(tmpdir(), 'foodtrack-chat-'));
+  const tokens = startTokenExecution('chat');
+  let tokenStatus = 'failed';
   let child, timer;
   const waiting = new Map();let seq=0, settled=false, finalText='', webSearches=0;
   const kill=()=>{if(child?.pid)try{process.kill(-child.pid,'SIGKILL');}catch{}};
@@ -66,7 +69,9 @@ ${disabled.map(key=>`${key} = false`).join('\n')}
       if(event.id!=null&&!event.method){const pending=waiting.get(event.id);waiting.delete(event.id);if(pending)event.error?pending.reject(new Error('El asistente no pudo iniciar la consulta.')):pending.resolve(event.result);return;}
       if(event.id!=null){child.stdin.write(JSON.stringify({id:event.id,error:{code:-32601,message:'Operación no permitida.'}})+'\n');return;}
       const {method,params={}}=event;
-      if(method==='item/agentMessage/delta'){
+      if(method==='thread/tokenUsage/updated'){
+        tokens.report(params.tokenUsage?.total);
+      }else if(method==='item/agentMessage/delta'){
         parts.set(params.itemId,(parts.get(params.itemId)||'')+params.delta);publish();
       }else if(method==='item/completed'&&params.item?.type==='agentMessage'){
         parts.set(params.item.id,params.item.text);publish();
@@ -88,9 +93,11 @@ ${disabled.map(key=>`${key} = false`).join('\n')}
       await rpc('turn/start',{threadId:thread.id,model:CHAT_MODEL,serviceTier:'default',effort:'medium',input:[{type:'text',text:JSON.stringify(messages),text_elements:[]}]});
       await done;
       if(!finalText.trim())throw new Error('El asistente no devolvió una respuesta.');
+      tokenStatus = 'completed';
       log('completed',{characters:finalText.length,webSearches});return finalText;
     } finally { signal?.removeEventListener('abort',abort);lines.close(); }
   } finally {
+    tokens.finish(signal?.aborted && tokenStatus !== 'completed' ? 'interrupted' : tokenStatus);
     clearTimeout(timer);
     const exited=child && child.exitCode===null && child.signalCode===null
       ? new Promise(resolve=>child.once('close',resolve)) : Promise.resolve();

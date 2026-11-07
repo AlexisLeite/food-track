@@ -52,7 +52,7 @@ export function createOutbox({ store = createOutboxStore(), notify = () => {} } 
     for (const item of visible) {
       const row = document.createElement('div'); row.className = 'pending-submission';
       const label = document.createElement('strong');
-      label.textContent = `${item.kind.startsWith('chat') ? 'Asistente' : item.mealId ? 'Corrección de comida' : 'Comida'} · ${item.date || new Intl.DateTimeFormat('es-UY').format(new Date(item.createdAt))}`; row.append(label);
+      label.textContent = `${item.kind.startsWith('chat') ? 'Asistente' : item.kind === 'workout' ? 'Entrenamiento' : item.mealId ? 'Corrección de comida' : 'Comida'} · ${item.date || new Intl.DateTimeFormat('es-UY').format(new Date(item.createdAt))}`; row.append(label);
       if (item.blob) {
         const preview = document.createElement(item.blob.type.startsWith('image/') ? 'img' : 'audio');
         preview.src = URL.createObjectURL(item.blob); urls.push(preview.src);

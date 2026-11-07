@@ -1,3 +1,4 @@
+import {withTokenTracking} from '../server/token-usage.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -81,13 +82,17 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   setTimeout(()=>{
    emit({method:'item/agentMessage/delta',params:{itemId:'answer',delta:'con fuente'}});
    emit({method:'item/completed',params:{item:{id:'answer',type:'agentMessage',text:'Respuesta con fuente'}}});
+   emit({method:'thread/tokenUsage/updated',params:{tokenUsage:{total:{inputTokens:1000,outputTokens:200,cachedInputTokens:600,reasoningOutputTokens:50}}}});
+   emit({method:'thread/tokenUsage/updated',params:{tokenUsage:{total:{inputTokens:1000,outputTokens:200,cachedInputTokens:600,reasoningOutputTokens:50}}}});
    emit({method:'turn/completed',params:{turn:{status:'completed'}}});
   },50);
  }
 });
 `,{mode:0o700});
   process.env.CODEX_BIN=cli;process.env.CODEX_HOME=dir;let searched=false;const updates=[];
-  assert.equal(await runAssistant({context:{},messages:[{role:'user',content:'Hola'}],onStatus:()=>searched=true,onText:text=>updates.push(text)}),'Respuesta con fuente');
+  const records=[];
+  assert.equal(await withTokenTracking({record:r=>records.push(structuredClone(r))},()=>runAssistant({context:{},messages:[{role:'user',content:'Hola'}],onStatus:()=>searched=true,onText:text=>updates.push(text)})),'Respuesta con fuente');
+  assert.equal(records.at(-1).status,'completed');assert.equal(records.at(-1).usage.total,1200);assert.equal(records.at(-1).source,'chat');
   assert.equal(searched,true);assert.deepEqual(updates,['Respuesta ','Respuesta con fuente','Respuesta con fuente']);
  }finally{
   if(original===undefined)delete process.env.CODEX_BIN;else process.env.CODEX_BIN=original;

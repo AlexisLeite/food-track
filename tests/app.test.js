@@ -14,7 +14,7 @@ test('calorie calculation and impossible deadline limits', () => {
  const p = calculateProfile({ ...profile, targetDate: '2027-01-01' }, '2026-10-18');
  assert.equal(p.expenditure, 2711); assert.ok(p.dailyCalories < p.expenditure);
  const limited = calculateProfile({ ...profile, targetDate: '2026-10-19' }, '2026-10-18');
- assert.equal(limited.limited, true); assert.equal(limited.dailyCalories, 1511);
+ assert.equal(limited.limited, true); assert.equal(limited.dailyCalories, 2440);
  assert.throws(() => calculateProfile({ ...profile, targetDate: '2026-02-30' }));
  assert.throws(() => calculateProfile({ ...profile, activity: 'toString' }));
  assert.throws(() => calculateProfile({ ...profile, weight: '80' }));
@@ -197,7 +197,7 @@ test('weekly totals use Sunday to Saturday and preserve daily goal changes', () 
   { date: '2026-10-24', selected: JSON.stringify({ calories: 700 }) },
   { date: '2026-10-25', selected: JSON.stringify({ calories: 9999 }) }
  ] });
- assert.deepEqual(summary, { start: '2026-10-18', end: '2026-10-24', total: 1000, target: 14000, maintenance: null, consumedBeforeDate: 0, daysRemaining: 7, remaining: 14000, rawDailyCalories: 2000, dailyCalories: 2000, minimumDailyCalories: 0, limited: false });
+ assert.deepEqual(summary, { start: '2026-10-18', end: '2026-10-24', total: 1000, target: 14000, maintenance: null, exerciseCalories: 0, exerciseWeekCalories: 0, consumedBeforeDate: 0, daysRemaining: 7, remaining: 14000, rawDailyCalories: 2000, dailyCalories: 2000, minimumDailyCalories: 0, limited: false });
 });
 
 test('projections show deadline weight and time to goal for loss, gain and maintenance', () => {
@@ -232,7 +232,7 @@ test('daily budget spends only prior days and includes today in remaining days',
  assert.equal(next.dailyCalories,2000); assert.equal(next.total,0);
 });
 
-test('deficit is capped at 1200 without fixed intake floors', () => {
+test('historical profiles retain their 1200 cap and new profiles default to ten percent', () => {
  assert.deepEqual(getCalorieLimits({ expenditure: 2497, gender: 'male' }), { minimum: 1297, maximum: 2997 });
  assert.equal(getCalorieLimits({ expenditure: 3000, gender: 'male' }).minimum, 1800);
  assert.equal(getCalorieLimits({ expenditure: 1800, gender: 'male' }).minimum, 600);
@@ -243,7 +243,7 @@ test('deficit is capped at 1200 without fixed intake floors', () => {
  const budget = buildWeek({ date:'2026-10-19', profile:p, goals:[], meals:[{date:'2026-10-18',selected:JSON.stringify({calories:12000})}] });
  assert.equal(budget.dailyCalories,1297);assert.equal(budget.minimumDailyCalories,1297);assert.equal(budget.limited,true);
  const uncapped = calculateProfile({ ...profile, targetDate:'2026-11-15' }, '2026-10-18');
- assert.equal(uncapped.dailyCalories,1511);assert.equal(uncapped.expenditure-uncapped.dailyCalories,1200);assert.equal(uncapped.limited,true);
+ assert.equal(uncapped.dailyCalories,2440);assert.equal(uncapped.expenditure-uncapped.dailyCalories,271);assert.equal(uncapped.limited,true);
  const redistributed=buildWeek({date:'2026-10-19',profile:p,goals:[],meals:[{date:'2026-10-18',selected:JSON.stringify({calories:3000})}]});
  assert.equal(redistributed.dailyCalories,1297);assert.equal(redistributed.limited,true);
 });

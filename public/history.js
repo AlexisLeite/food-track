@@ -3,20 +3,33 @@ import { rollingWeekProgress } from './week-progress.js?v=20261101-rolling-1';
 const fmt = value => new Intl.NumberFormat('es-UY', { maximumFractionDigits: 1 }).format(value);
 const shortDate = date => new Intl.DateTimeFormat('es-UY', { day: 'numeric', month: 'short' }).format(new Date(`${date}T12:00:00Z`));
 const labels = { calories: 'Calorías', protein: 'Proteínas', fat: 'Grasas', carbs: 'Carbohidratos' };
+export function chartRange(values) {
+  const finite = values.filter(Number.isFinite);
+  if (!finite.length) return { min:0, max:1, ticks:[0,.2,.4,.6,.8,1] };
+  const low = Math.min(...finite), high = Math.max(...finite);
+  const span = Math.max(high-low, Math.max(Math.abs(low),Math.abs(high))*.1, 1);
+  const center = (low+high)/2;
+  const min = low >= 0 ? Math.max(0,center-span*.58) : center-span*.58;
+  const max = center+span*.58;
+  const roughStep = (max-min)/6, power = 10 ** Math.floor(Math.log10(roughStep));
+  const step = Math.max(.1,[1,2,2.5,5,10].find(n=>n>=roughStep/power)*power);
+  const ticks = [];
+  for (let i=Math.ceil(min/step); i*step<=max+step*1e-9; i++) ticks.push(Number((i*step).toPrecision(12)));
+  return { min, max, ticks };
+}
 export function historyChart(history, metric, { asOf = new Intl.DateTimeFormat('en-CA',{timeZone:'America/Montevideo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()), maintenance } = {}) {
   const days = history.days;
   const showMaintenance = metric === 'calories' && days.some(day => Number.isFinite(day.maintenance?.calories));
-  const sources = showMaintenance ? ['maintenance', 'target', 'actual'] : ['target', 'actual'];
+  const sources = metric === 'calories' ? (showMaintenance ? ['maintenance','target'] : ['target']) : ['target','actual'];
   const sourceLabels = { actual: 'Consumido', target: 'Objetivo', maintenance: 'Mantenimiento' };
   const unit = metric === 'calories' ? 'kcal' : 'g';
   const width = 420, height = 240, left = 46, right = 14, top = 18, bottom = 36;
-  const values = days.flatMap(d => sources.map(source => d[source]?.[metric])).filter(v => typeof v === 'number');
-  const roughStep = Math.max(1, ...values) / 4;
-  const power = 10 ** Math.floor(Math.log10(roughStep));
-  const step = Math.ceil(roughStep / power) * power, max = step * 4;
-  const x = i => left + i * (width - left - right) / Math.max(1, days.length - 1);
-  const y = value => top + (1 - value / max) * (height - top - bottom);
   const weekly = metric === 'calories' ? rollingWeekProgress(history.balanceDays || days, asOf, maintenance, history.end) : new Map();
+  // Scale only the lines actually drawn, including the rolling balance overlay.
+  const values = days.flatMap(d => [...sources.map(source => d[source]?.[metric]), weekly.get(d.date)?.value]);
+  const { min, max, ticks: verticalTicks } = chartRange(values);
+  const x = i => left + i * (width - left - right) / Math.max(1, days.length - 1);
+  const y = value => top + (1 - (value-min) / (max-min)) * (height - top - bottom);
   const weeklyOverlay = (() => {
     const weeklyPoints = days.map((day,index)=>({index,...weekly.get(day.date)})).filter(point=>Number.isFinite(point.value));
     const last = weeklyPoints.at(-1); if (!last) return '';
@@ -31,7 +44,7 @@ export function historyChart(history, metric, { asOf = new Intl.DateTimeFormat('
     const value=day[source]?.[metric];
     return Number.isFinite(value)?{x:x(index),y:y(value)}:null;
   }));
-  const grid = Array.from({ length: 5 }, (_, i) => { const value = step * i; return `<line x1="${left}" x2="${width-right}" y1="${y(value)}" y2="${y(value)}" class="chart-grid"/><text x="${left-8}" y="${y(value)+4}" text-anchor="end">${fmt(value)}</text>`; }).join('');
+  const grid = verticalTicks.map(value => { return `<line x1="${left}" x2="${width-right}" y1="${y(value)}" y2="${y(value)}" class="chart-grid"/><text x="${left-8}" y="${y(value)+4}" text-anchor="end">${fmt(value)}</text>`; }).join('');
   const ticks = [...new Set([0, Math.floor((days.length-1)/2), days.length-1])].map(i => `<text x="${x(i)}" y="${height-10}" text-anchor="${i === 0 ? 'start' : i === days.length-1 ? 'end' : 'middle'}">${shortDate(days[i].date)}</text>`).join('');
   const points = metric === 'calories' ? '' : days.map((day, i) => ['actual'].map(source => {
     const value = day[source]?.[metric]; if (typeof value !== 'number') return '';

@@ -1,13 +1,18 @@
-import { createOutbox, processFoodSubmission } from './outbox.js?v=20261026-pending-1';
+import { dateSelectorMarkup, dailyRecordMarkup } from './daily-view.js?v=20261106-workout-layout-1';
+function applyTheme(theme = 'dark') {
+  document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+  document.querySelector('meta[name="theme-color"]').content = theme === 'light' ? '#ffffff' : '#161616';
+}
+import { createOutbox, processFoodSubmission, submissionHash } from './outbox.js?v=20261106-expenditure-1';
 import { createAssistant } from './assistant.js?v=20261026-mobile-keyboard-2';
-import { calorieProgressMarkup } from './calorie-progress.js?v=20261023-maintenance-bar-1';
+import { calorieProgressMarkup } from './calorie-progress.js?v=20261106-theme-1';
 import './dock-offset.js?v=20261023-safari-offset-16';
 import { bindDaySwipe } from './swipe.js?v=20261023-day-swipe-1';
 import { readApiResponse } from './api-response.js?v=20261023-audio-errors-1';
 import { processingMarkup } from './processing.js';
-import { getMacroPlan, getGoalProjection, getCalorieLimits, hasMacros, summarizeMeals } from './nutrition.js?v=20261019-deficit-1200-1';
-import { historyChart } from './history.js?v=20261101-rolling-1';
-import { createVoiceInput } from './voice.js?v=20261026-pending-1';
+import { getMacroPlan, getGoalProjection, getCalorieLimits, defaultMaxDailyDeficitPercent, maxDailyDeficitPercent, activityFactors, dailyActivityFactors, hasMacros, summarizeMeals } from './nutrition.js?v=20261106-expenditure-1';
+import { historyChart } from './history.js?v=20261106-auto-range-1';
+import { createVoiceInput } from './voice.js?v=20261106-expenditure-1';
 import { createUserCache, isCancelledError } from './cache.js?v=20261020-week-allocation-1';
 const outbox = createOutbox({ notify: (message,error) => toast(message,error) });
 const assistant = createAssistant({ notify: (message,error) => toast(message,error), outbox });
@@ -103,7 +108,7 @@ async function requestApi(url, options = {}) {
     if (error.code === 'INVALID_API_RESPONSE') console.warn('api_response_error', { path: url, method: options.method || 'GET', status: res.status, contentType: res.headers.get('Content-Type'), requestId: res.headers.get('X-Request-ID'), proxyRequestId: res.headers.get('CF-Ray') });
     throw error;
   }
-  if (!res.ok) { if (res.status === 401 && user) { sectionCache.clear(true); user = null; meals = []; week = null; closeModal(); render(); } throw Object.assign(new Error(data.error || 'No se pudo completar la acción.'), { status: res.status, code: data.code }); }
+  if (!res.ok) { if (res.status === 401 && user) { sectionCache.clear(true); user = null; statistics = null; statisticsError = ''; statisticsRequest++; workoutsData = null; workoutDate = localDate(); meals = []; week = null; closeModal(); render(); } throw Object.assign(new Error(data.error || 'No se pudo completar la acción.'), { status: res.status, code: data.code }); }
   return includeRevision ? { data, etag: res.headers.get('ETag') } : data;
 }
 async function api(url, options = {}) {
@@ -119,24 +124,27 @@ async function api(url, options = {}) {
     }
   }
   const data = await requestApi(url, options);
-  if (data.user && ['/api/me', '/api/login', '/api/register'].includes(url)) { sectionCache.setUser(data.user.id); sectionCache.setProfile(data.user.profile); }
+  if (data.user && ['/api/me', '/api/login', '/api/register'].includes(url)) { applyTheme(data.user.theme); sectionCache.setUser(data.user.id); sectionCache.setProfile(data.user.profile); }
   if (method !== 'GET' && url === '/api/profile') { sectionCache.invalidate(); sectionCache.setProfile(data.profile); historyData = null; week = null; }
-  if (method !== 'GET' && url.startsWith('/api/meals')) {
+  if (method !== 'GET' && (url.startsWith('/api/meals') || url.startsWith('/api/workouts'))) {
     sectionCache.invalidate('day');
     sectionCache.invalidate('history'); historyData = null;
   }
-  if (url === '/api/logout') sectionCache.clear(true);
+  if (url === '/api/logout') { sectionCache.clear(true); applyTheme(); }
   return data;
 }
 
 function header(title = 'Comida') {
   const icons = {
     day: '<path d="M5 3v6a3 3 0 0 0 6 0V3M8 3v18M18 3c-2 3-3 6-3 9h5M20 3v18"/>',
+    workouts: '<path d="M6 4v16M3 8v8M18 4v16M21 8v8M6 12h12"/>',
+    statistics: '<path d="M4 20V10M10 20V4M16 20v-7M22 20V7"/>',
     history: '<path d="M4 3v17h17M8 14l4-5 4 3 5-7"/>',
     chat: '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>',
     settings: '<path d="M4 7h7M15 7h5M4 17h2M10 17h10"/><circle cx="13" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>'
   };
-  return `<header class="app-header"><h1 class="sr-only">${title}</h1><nav class="bottom-nav${user.canChat ? ' has-assistant' : ''}" aria-label="Secciones">${[['day', 'Comida'], ['history', 'Historia'], ['settings', 'Configuración'], ...(user.canChat ? [['chat', 'Asistente']] : [])].map(([section, label]) => `<button type="button" class="bottom-nav-button" data-action="${section}" aria-label="${label}" title="${label}" ${view === section ? 'aria-current="page"' : ''} ${!user.profile && section !== 'settings' ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[section]}</svg></button>`).join('')}</nav></header>`;
+  const sections = [['day', 'Comida'], ...(user.profile?.expenditureMode === 'workouts' ? [['workouts', 'Entrenamientos']] : []), ['history', 'Historia'], ['settings', 'Configuración'], ...(user.canChat ? [['chat', 'Asistente']] : []), ...(user.canViewStatistics ? [['statistics', 'Estadísticas']] : [])];
+  return `<header class="app-header"><h1 class="sr-only">${title}</h1><nav class="bottom-nav${user.canChat ? ' has-assistant' : ''}${user.profile?.expenditureMode === 'workouts' ? ' has-workouts' : ''}" aria-label="Secciones" data-sections="${sections.length}">${sections.map(([section, label]) => `<button type="button" class="bottom-nav-button" data-action="${section}" aria-label="${label}" title="${label}" ${view === section ? 'aria-current="page"' : ''} ${!user.profile && section !== 'settings' ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[section]}</svg></button>`).join('')}</nav></header>`;
 }
 function footer() { return `<footer class="footer"><small>${esc(user.username)}</small><button class="text" data-action="logout">Salir</button></footer>`; }
 function snapshotPanel(selector = '.view-panel') {
@@ -169,6 +177,7 @@ function animatePanel(snapshot, direction, selector = '.view-panel') {
 async function switchView(next, date = currentDate) {
   if (!user?.profile && next !== 'settings') return;
   if (next === 'chat' && !user?.canChat) return;
+  if (next === 'statistics' && !user?.canViewStatistics) return;
   const request = ++navigationRequest; ++dayRequest; pendingDate = null;
   const historyLoadRequest = next === 'history' ? ++historyRequest : null;
   const identity = user.id, previous = view, snapshot = snapshotPanel();
@@ -180,8 +189,10 @@ async function switchView(next, date = currentDate) {
   }
   if (next === 'history') { historyData = sectionCache.peek(`/api/history?days=${historyRange}&end=${historyEnd}`) || null; historyLoading = true; historyError = ''; }
   view = next; render();
-  const order = ['day', 'history', 'settings', 'chat'];
+  const order = ['day', 'workouts', 'history', 'settings', 'chat', 'statistics'];
   const motion = previous !== next ? animatePanel(snapshot, order.indexOf(next) > order.indexOf(previous) ? 1 : -1) : Promise.resolve();
+  if (next === 'statistics') { await loadStatistics(motion); return; }
+  if (next === 'workouts') { await loadWorkouts(motion); return; }
   if (next === 'settings' || next === 'chat') return;
   root.setAttribute('aria-busy', 'true');
   try {
@@ -238,9 +249,33 @@ function render() {
   root.setAttribute('aria-busy', 'false');
   if (!user) return renderAuth();
   if (view === 'settings' || !user.profile) return renderSettings();
+  if (view === 'workouts') return renderWorkouts();
   if (view === 'history') return renderHistory();
+  if (view === 'statistics' && user.canViewStatistics) return renderStatistics();
   if (view === 'chat' && user.canChat) return renderAssistant();
   renderDay();
+}
+let statistics = null, statisticsError = '', statisticsDays = 7, statisticsRequest = 0;
+function renderStatistics() {
+  const data = statistics?.userId === user.id && statistics.days === statisticsDays ? statistics : null;
+  const percent = value => `${new Intl.NumberFormat('es-UY',{minimumFractionDigits:2,maximumFractionDigits:4}).format(value)} %`;
+  const dateText = date => new Intl.DateTimeFormat('es-UY',{day:'numeric',month:'short'}).format(new Date(`${date}T12:00:00`));
+  root.innerHTML = `${header('Estadísticas')}<div class="view-panel statistics-view"><h2>Consumo semanal estimado</h2><div class="history-controls"><div><label for="statistics-period">Período</label><select id="statistics-period">${[7,30,90].map(days => `<option value="${days}" ${statisticsDays === days ? 'selected' : ''}>Últimos ${days} días</option>`).join('')}</select></div></div>${data ? `<div class="calories"><div class="daily-counter"><strong>${percent(data.totals.weeklyPercent)}</strong></div><small>de una cuota semanal · últimos ${statisticsDays} días</small></div><h2>Los 3 usuarios que más consumen</h2><div class="statistics-ranking">${data.topUsers.length ? data.topUsers.map((u,index) => `<div class="statistics-user"><span>${index+1}. ${esc(u.username)}</span><strong>${percent(u.weeklyPercent)}</strong></div>`).join('') : '<p class="empty">Todavía no hay consumo registrado.</p>'}</div><h2>Consumo por día</h2><div class="statistics-table"><table><thead><tr><th scope="col">Día</th><th scope="col">Cuota semanal</th><th scope="col">Tokens</th></tr></thead><tbody>${data.daily.slice().reverse().map(day => `<tr><th scope="row">${dateText(day.date)}</th><td>${percent(day.weeklyPercent)}${day.unreported ? ' *' : ''}</td><td>${fmt(day.total)}</td></tr>`).join('')}</tbody></table></div>${data.totals.unreported ? `<p class="hint">* ${fmt(data.totals.unreported)} ejecuciones sin conteo informado. Sus tokens no se estiman ni se suman como cero.</p>` : ''}<p class="hint">Registro desde ${dateText(new Intl.DateTimeFormat('en-CA',{timeZone:'America/Montevideo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(data.startedAt)))}. Días según la hora de Uruguay. El ranking usa el mismo período. Los porcentajes de cada día se suman.</p><p class="hint">Estimación de Foodtrack sobre una cuota de Pro US$200, ponderada por entrada, caché, salida y velocidad. No representa el saldo global de tu cuenta. En períodos mayores a 7 días puede superar el 100 %.</p>` : statisticsError ? `<p class="error">${esc(statisticsError)}</p><button class="text" data-action="statistics">Reintentar</button>` : '<p class="empty" role="status">Cargando estadísticas…</p>'}${footer()}</div>`;
+  syncDock();
+  document.querySelector('#statistics-period').onchange = async e => { statisticsDays = Number(e.target.value); statisticsError = ''; renderStatistics(); await loadStatistics(); };
+}
+async function loadStatistics(motion = Promise.resolve()) {
+  const identity = user.id, request = ++statisticsRequest, days = statisticsDays;
+  statisticsError = '';
+  try {
+    const [data] = await Promise.all([api(`/api/statistics?days=${days}`), motion]);
+    if (request !== statisticsRequest || user?.id !== identity) return;
+    statistics = { ...data, userId: identity };
+    if (view === 'statistics') renderStatistics();
+  } catch (error) {
+    await motion;
+    if (request === statisticsRequest && user?.id === identity && view === 'statistics') { statisticsError = error.message; renderStatistics(); toast(error.message, true); }
+  }
 }
 function renderAssistant() {
   root.innerHTML = `${header('Asistente')}<div class="view-panel assistant-view"><div id="assistant-slot"></div></div>`;
@@ -256,16 +291,15 @@ function renderAuth() {
     catch (e) { error.textContent = e.message; error.hidden = false; button.disabled = false; }
   };
 }
-function dateLabel() { const label = new Intl.DateTimeFormat('es-UY', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${currentDate}T12:00:00`)); return currentDate === localDate() ? `Hoy, ${label}` : label; }
 function calorieProgress(total, target, maintenance) {
   return calorieProgressMarkup({ total, target, maintenance, unavailable: loadingDay || !!dayError || target === null });
 }
 
 function renderDay() {
   const profile = week && 'profile' in week ? week.profile : user.profile;
-  const maintenance = profile?.expenditure;
+  const maintenance = profile ? profile.expenditure + (week?.exerciseCalories || 0) : null;
   const totals = summarizeMeals(meals), total = totals.calories, target = profile ? (week?.dailyCalories ?? profile.dailyCalories) : null;
-  root.innerHTML = `${header()}<div class="view-panel"><section class="daily-section" aria-label="Registro diario"><div class="date-nav"><button class="icon" data-action="prev" aria-label="Día anterior"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg></button><label class="date-field"><span>${esc(dateLabel())}</span><input id="day-date" type="date" value="${currentDate}" aria-label="Seleccionar fecha"></label><button class="icon" data-action="next" aria-label="Día siguiente"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg></button></div><div class="day-panel"><div class="calories" aria-live="polite"><div class="daily-counter ${loadingDay || dayError || target === null ? '' : total <= target ? 'within-budget' : total > maintenance ? 'over-budget' : ''}" aria-label="Calorías del día: consumidas / ${total > target && Number.isFinite(maintenance) ? 'mantenimiento / objetivo' : 'objetivo'}"><strong>${loadingDay ? '…' : dayError ? '—' : fmt(total)}</strong>${total > target && Number.isFinite(maintenance) ? `<span class="maintenance"> / ${fmt(maintenance)}</span><span class="target exceeded-target"> / <s>${(target === null ? '—' : fmt(target))}</s></span>` : `<span class="target"> / ${(target === null ? '—' : fmt(target))}</span>`}<span class="calorie-unit"> kcal</span></div><div class="weekly-counter ${week ? week.total <= week.target ? 'within-budget' : Number.isFinite(week.maintenance) && week.total > week.maintenance ? 'over-budget' : '' : ''}" aria-label="Calorías de la semana: consumidas / ${week && week.total > week.target && Number.isFinite(week.maintenance) ? 'mantenimiento / objetivo' : 'objetivo'}" title="Semana de domingo a sábado"><span>${week ? fmt(week.total) : '—'}</span>${week && week.total > week.target && Number.isFinite(week.maintenance) ? `<span class="weekly-maintenance"> / ${fmt(week.maintenance)}</span><span class="weekly-target exceeded-target"> / <s>${fmt(week.target)}</s></span>` : `<span class="weekly-target"> / ${week ? fmt(week.target) : '—'}</span>`} kcal<span class="sr-only"> · Semana de domingo a sábado</span></div>${calorieProgress(total, target, maintenance)}</div>${profile ? macroSummary(totals, { ...profile, dailyCalories: target, macroPlan: getMacroPlan({ ...profile, dailyCalories: target }) }) : '<p class="hint">No hay una configuración guardada para esta fecha.</p>'}<button class="primary wide capture" data-action="photo" ${uploading ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 5 9.5 3h5L16 5h4a1 1 0 0 1 1 1v14H3V6a1 1 0 0 1 1-1z"/><circle cx="12" cy="12" r="4"/></svg>${uploading ? 'Guardando foto…' : 'Tomar foto'}</button><button class="wide describe-button" data-action="describe" ${uploading ? 'disabled' : ''}>Describir comida</button><input type="file" id="photo-input" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" capture="environment" hidden><div class="meals">${loadingDay ? '<p class="empty" role="status">Cargando…</p>' : dayError ? `<p class="error">${esc(dayError)}</p><button class="text" data-action="retry-day">Reintentar</button>` : meals.length ? meals.map(m => `<button class="meal" data-meal="${m.id}">${m.photoUrl ? `<img src="${m.photoUrl}" alt="" loading="lazy">` : '<span class="text-meal-icon" aria-hidden="true">≡</span>'}<span class="name"><strong>${esc(m.selected?.name || 'Elegir comida')}</strong><small>${esc(m.selected?.portion || 'Pendiente de confirmar')}</small>${m.selected ? `<small>${hasMacros(m.selected) ? macroText(m.selected) : 'Sin macros · reevaluar'}</small>` : ''}</span><span class="kcal">${m.selected ? `${fmt(m.selected.calories)} kcal` : '…'}</span></button>`).join('') : '<p class="empty">Todavía no registraste comidas.</p>'}</div></div></section>${footer()}</div>`;
+  root.innerHTML = `${header()}<div class="view-panel"><section class="daily-section" aria-label="Registro diario">${dateSelectorMarkup({ date: currentDate, today: localDate(), id: 'day-date' })}<div class="day-panel"><div class="calories" aria-live="polite"><div class="daily-counter ${loadingDay || dayError || target === null ? '' : total <= target ? 'within-budget' : total > maintenance ? 'over-budget' : ''}" aria-label="Calorías del día: consumidas / ${total > target && Number.isFinite(maintenance) ? 'mantenimiento / objetivo' : 'objetivo'}"><strong>${loadingDay ? '…' : dayError ? '—' : fmt(total)}</strong>${total > target && Number.isFinite(maintenance) ? `<span class="maintenance"> / ${fmt(maintenance)}</span><span class="target exceeded-target"> / <s>${(target === null ? '—' : fmt(target))}</s></span>` : `<span class="target"> / ${(target === null ? '—' : fmt(target))}</span>`}<span class="calorie-unit"> kcal</span></div><div class="weekly-counter ${week ? week.total <= week.target ? 'within-budget' : Number.isFinite(week.maintenance) && week.total > week.maintenance ? 'over-budget' : '' : ''}" aria-label="Calorías de la semana: consumidas / ${week && week.total > week.target && Number.isFinite(week.maintenance) ? 'mantenimiento / objetivo' : 'objetivo'}" title="Semana de domingo a sábado"><span>${week ? fmt(week.total) : '—'}</span>${week && week.total > week.target && Number.isFinite(week.maintenance) ? `<span class="weekly-maintenance"> / ${fmt(week.maintenance)}</span><span class="weekly-target exceeded-target"> / <s>${fmt(week.target)}</s></span>` : `<span class="weekly-target"> / ${week ? fmt(week.target) : '—'}</span>`} kcal<span class="sr-only"> · Semana de domingo a sábado</span></div>${calorieProgress(total, target, maintenance)}${week?.exerciseCalories ? `<small>Entrenamientos: +${fmt(week.exerciseCalories)} kcal de gasto</small>` : ''}</div>${profile ? macroSummary(totals, { ...profile, dailyCalories: target, macroPlan: getMacroPlan({ ...profile, dailyCalories: target }) }) : '<p class="hint">No hay una configuración guardada para esta fecha.</p>'}<button class="primary wide capture" data-action="photo" ${uploading ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 5 9.5 3h5L16 5h4a1 1 0 0 1 1 1v14H3V6a1 1 0 0 1 1-1z"/><circle cx="12" cy="12" r="4"/></svg>${uploading ? 'Guardando foto…' : 'Tomar foto'}</button><button class="wide describe-button" data-action="describe" ${uploading ? 'disabled' : ''}>Describir comida</button><input type="file" id="photo-input" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" capture="environment" hidden><div class="meals">${loadingDay ? '<p class="empty" role="status">Cargando…</p>' : dayError ? `<p class="error">${esc(dayError)}</p><button class="text" data-action="retry-day">Reintentar</button>` : meals.length ? meals.map(m => dailyRecordMarkup({ kind: 'meal', id: m.id, photoUrl: m.photoUrl, name: m.selected?.name || 'Elegir comida', details: [m.selected?.portion || 'Pendiente de confirmar', ...(m.selected ? [hasMacros(m.selected) ? macroText(m.selected) : 'Sin macros · reevaluar'] : [])], calories: m.selected?.calories })).join('') : '<p class="empty">Todavía no registraste comidas.</p>'}</div></div></section>${footer()}</div>`;
   syncDock();
   document.querySelector('#day-date').onchange = e => { changeDay(e.target.value).catch(e => toast(e.message, true)); };
   document.querySelector('#photo-input').onchange = uploadPhoto;
@@ -276,17 +310,117 @@ async function loadDay() {
   catch (error) { if (request === dayRequest && !cached) dayError = error.message; throw error; }
   finally { if (request === dayRequest) { loadingDay = false; if (view === 'day' && user?.profile) render(); } }
 }
+let workoutDate = localDate(), workoutsData = null, workoutRequest = 0, workoutError = '';
+function renderWorkouts() {
+  const data = workoutsData?.date === workoutDate && workoutsData?.userId === user.id ? workoutsData : null;
+  const detailed = data?.profile?.expenditureMode === 'workouts';
+  const entries = data?.workouts || [];
+  const total = entries.reduce((sum, w) => sum + w.calories, 0);
+  root.innerHTML = `${header('Entrenamientos')}<div class="view-panel"><section class="daily-section" aria-label="Registro de entrenamientos">${dateSelectorMarkup({ date: workoutDate, today: localDate(), id: 'workout-date', max: localDate() })}<div class="day-panel"><div class="calories workout-total" aria-live="polite"><div class="daily-counter"><strong>${data ? `+${fmt(total)}` : workoutError ? '—' : '…'}</strong><span class="calorie-unit"> kcal</span></div><small>Gasto por entrenamientos</small></div>${data ? detailed ? '<button class="primary wide capture" data-action="describe-workout">Describir entrenamiento</button><p class="hint">Gasto adicional al mantenimiento base, sin contar el reposo.</p>' : '<p class="hint">Este día usa el perfil estimado. El nivel de actividad ya contempla los entrenamientos.</p><button class="wide" data-action="settings">Configurar perfil de gasto</button>' : ''}<div class="meals">${!data ? workoutError ? `<p class="error">${esc(workoutError)}</p><button class="text" data-action="retry-workouts">Reintentar</button>` : '<p class="empty" role="status">Cargando…</p>' : entries.length ? entries.map(w => dailyRecordMarkup({ kind: 'workout', id: w.id, name: w.description, details: [w.confirmed ? w.estimate.activities.map(a => `${a.name}: ${fmt(a.minutes)} min`).join(' · ') : 'Pendiente de confirmar'], calories: w.confirmed ? w.calories : null })).join('') : '<p class="empty">Todavía no registraste entrenamientos.</p>'}</div></div></section>${footer()}</div>`;
+  syncDock();
+  document.querySelector('#workout-date').onchange = e => { changeWorkoutDay(e.target.value).catch(error => toast(error.message, true)); };
+  root.querySelectorAll('[data-workout]').forEach(button => { button.onclick = () => openWorkout(entries.find(w => w.id === button.dataset.workout)); });
+}
+async function loadWorkouts(motion = Promise.resolve()) {
+  const identity = user.id, date = workoutDate, request = ++workoutRequest;
+  workoutError = ''; root.setAttribute('aria-busy', 'true');
+  try {
+    const [data] = await Promise.all([api(`/api/workouts?date=${date}`), motion]);
+    if (request !== workoutRequest || user?.id !== identity) return;
+    workoutsData = { ...data, date, userId: identity };
+    if (view === 'workouts') renderWorkouts();
+  } catch (error) {
+    await motion;
+    if (request === workoutRequest && user?.id === identity && view === 'workouts') { workoutError = error.message; renderWorkouts(); toast(error.message, true); }
+  } finally { if (request === workoutRequest) root.setAttribute('aria-busy', 'false'); }
+}
+async function changeWorkoutDay(date, force = false) {
+  if (!date || date > localDate() || (date === workoutDate && !force)) return;
+  const previous = workoutDate, snapshot = snapshotPanel('.day-panel');
+  workoutDate = date; workoutError = ''; renderWorkouts();
+  const motion = previous !== date ? animatePanel(snapshot, date > previous ? 1 : -1, '.day-panel') : Promise.resolve();
+  await loadWorkouts(motion);
+}
+function changeSelectedDay(direction) {
+  if (view === 'workouts') return changeWorkoutDay(shiftDate(workoutDate, direction));
+  return changeDay(shiftDate(pendingDate || currentDate, direction));
+}
+function openWorkoutDescription() {
+  if (analysisBusy || audioBusy) return toast('Esperá a que termine el análisis actual.');
+  if (!user.canChat) return toast('No tenés autorización para usar esta función. Contactá con el administrador.', true);
+  const date = workoutDate;
+  dialog.innerHTML = `${modalHeader('Describir entrenamiento')}<div class="dialog-body"><p class="hint">Describí lo que hiciste. Si faltan datos, te proponemos tres opciones para elegir.</p><form id="workout-form">${voice.button()}</form></div>`;
+  showModal();
+  const form = document.querySelector('#workout-form');
+  form.dataset.processingLabel = 'Estimando entrenamiento…';
+  const text = form.querySelector('textarea'); text.placeholder = 'Describí el entrenamiento, su duración e intensidad…'; text.setAttribute('aria-label','Descripción del entrenamiento');
+  voice.bind(form, (text, source)=>outbox.submit({kind:'workout',date,text,source}), blob=>outbox.submit({kind:'workout',date,blob,source:'audio'}));
+}
+function openWorkout(w) {
+  if (!w) return;
+  const options = w.estimate.options;
+  dialog.innerHTML = `${modalHeader('Entrenamiento')}<div class="dialog-body"><p>${esc(w.description)}</p>${options ? `<p class="hint">Elegí la opción que mejor representa tu entrenamiento.</p><div class="options">${options.map((option, index) => `<button type="button" class="option${w.confirmed && w.estimate.selectedIndex === index ? ' chosen' : ''}" data-workout-option="${index}" aria-pressed="${w.confirmed && w.estimate.selectedIndex === index}"><span class="option-label"><strong>${esc(option.name)}</strong><small>${esc(option.activities.map(a => `${a.name}: ${fmt(a.minutes)} min`).join(' · '))}</small><small>${esc(option.details)}</small></span><span class="kcal">${fmt(option.calories)} kcal</span></button>`).join('')}</div>` : `<div class="stack">${w.estimate.activities.map(a=>`<div><strong>${esc(a.name)}</strong><small class="workout-activity">${fmt(a.minutes)} min · ${fmt(a.met)} MET · ${fmt(a.calories)} kcal adicionales</small></div>`).join('')}<p>${fmt(w.estimate.calories)} kcal de gasto estimado</p><small>${esc(w.estimate.details)}</small>${!w.confirmed ? '<button class="primary wide" id="confirm-workout">Confirmar entrenamiento</button>' : '<small>Entrenamiento confirmado</small>'}</div>`}<small>Gasto adicional estimado, sin contar el reposo. Peso usado: ${fmt(w.estimate.weight)} kg.</small><div class="meal-actions"><button class="wide delete-meal-button" id="delete-workout">Eliminar entrenamiento</button></div></div>`;
+  showModal();
+  const buttons = [...dialog.querySelectorAll('[data-workout-option], #confirm-workout, #delete-workout')];
+  for (const button of buttons) {
+    button.onclick = async () => {
+      const deleting = button.id === 'delete-workout';
+      const identity = user.id;
+      buttons.forEach(b => { b.disabled = true; });
+      try {
+        await api(`/api/workouts/${w.id}${deleting ? '' : '/confirm'}`, { method: deleting ? 'DELETE' : 'PUT', body: button.hasAttribute('data-workout-option') ? { optionIndex: Number(button.dataset.workoutOption) } : {} });
+        if (user?.id !== identity) return;
+        closeModal(); await loadWorkouts(); if (view === 'day') await loadDay(); toast(deleting ? 'Entrenamiento eliminado' : 'Entrenamiento guardado');
+      } catch (error) { toast(error.message, true); buttons.forEach(b => { b.disabled = false; }); }
+    };
+  }
+}
+
+outbox.register('workout', async (item, checkpoint, checkUser) => {
+  if(analysisBusy || uploading) throw new Error('Esperá a que termine el análisis actual.');
+  analysisBusy=true;
+  dialog.innerHTML=`${modalHeader('Estimar entrenamiento')}<div class="dialog-body">${processingMarkup(item.source,'Estimando entrenamiento…')}</div>`;showModal();
+  try {
+    const send=async(url,body,step)=>{checkUser();const data=await api(url,{method:'POST',body,headers:{'X-Submission-ID':await submissionHash(`${item.id}:${step}`)}});checkUser();return data;};
+    if(item.blob && !item.text){const payload=new FormData();payload.append('audio',item.blob,'workout.audio');const data=await send('/api/transcribe',payload,'transcribe');await checkpoint({text:data.text});}
+    const data=await send('/api/workouts',{date:item.date,description:item.text},'estimate');
+    await loadWorkouts();checkUser();
+    if(dialog.open) openWorkout(data.workout);else toast('Entrenamiento estimado. Abrilo para confirmar.');
+    return data;
+  } catch(error){if(user?.id===item.userId && dialog.open)closeModal();throw error;}
+  finally {analysisBusy=false;}
+});
+
 function renderSettings() {
   const p = user.profile || {};
   const numberField = (name, label, min, max, step = '1') => `<div class="field"><label for="${name}">${label}</label><input id="${name}" name="${name}" type="number" inputmode="${step === '1' ? 'numeric' : 'decimal'}" min="${min}" max="${max}" step="${step}" value="${p[name] ?? ''}" required></div>`;
-  root.innerHTML = `${header('Configuración')}<div class="view-panel"><form id="profile-form" class="stack"><div class="grid">${numberField('height', 'Altura (cm)', 100, 250)}${numberField('age', 'Edad', 18, 100)}${numberField('weight', 'Peso actual (kg)', 30, 350, '0.1')}<div class="field"><label for="gender">Género</label><select id="gender" name="gender" required><option value="">Seleccionar</option><option value="female" ${p.gender === 'female' ? 'selected' : ''}>Mujer</option><option value="male" ${p.gender === 'male' ? 'selected' : ''}>Hombre</option></select></div></div><div class="field"><label for="activity">Nivel de actividad</label><select id="activity" name="activity" required>${[['', 'Seleccionar'], ['sedentary', 'Sedentario · poco o ningún ejercicio'], ['light', 'Ligero · 1–3 días por semana'], ['moderate', 'Moderado · 3–5 días por semana'], ['active', 'Alto · 6–7 días por semana'], ['very_active', 'Muy alto · trabajo físico y ejercicio']].map(([value, label]) => `<option value="${value}" ${p.activity === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div class="section-gap"><h2>Tu objetivo</h2><div class="grid">${numberField('targetWeight', 'Peso objetivo (kg)', 30, 350, '0.1')}<div class="field"><label for="targetDate">Para qué fecha</label><input id="targetDate" name="targetDate" type="date" min="${shiftDate(localDate(), 1)}" value="${esc(p.targetDate || '')}" required></div></div></div><div id="estimate" class="estimate" ${p.dailyCalories ? '' : 'hidden'}>${p.dailyCalories ? estimateMarkup(p) : ''}</div><p id="profile-error" class="error" role="alert" hidden></p><button class="primary" type="submit">Guardar configuración</button><small>El gasto, las calorías y los macros son estimaciones para adultos.</small></form>${footer()}</div>`;
+  root.innerHTML = `${header('Configuración')}<div class="view-panel"><div class="field theme-setting"><label for="theme-select">Tema</label><select id="theme-select"><option value="dark" ${user.theme !== 'light' ? 'selected' : ''}>Oscuro</option><option value="light" ${user.theme === 'light' ? 'selected' : ''}>Claro</option></select></div><form id="profile-form" class="stack"><div class="grid">${numberField('height', 'Altura (cm)', 100, 250)}${numberField('age', 'Edad', 18, 100)}${numberField('weight', 'Peso actual (kg)', 30, 350, '0.1')}<div class="field"><label for="gender">Género</label><select id="gender" name="gender" required><option value="">Seleccionar</option><option value="female" ${p.gender === 'female' ? 'selected' : ''}>Mujer</option><option value="male" ${p.gender === 'male' ? 'selected' : ''}>Hombre</option></select></div></div><div class="field"><label for="expenditureMode">Perfil de gasto</label><select id="expenditureMode" name="expenditureMode"><option value="estimated" ${p.expenditureMode !== 'workouts' ? 'selected' : ''}>Estimado</option><option value="workouts" ${p.expenditureMode === 'workouts' ? 'selected' : ''}>Por entrenamientos</option></select><small id="expenditure-help"></small></div><div class="field" id="daily-activity-field"><label for="dailyActivity">Actividad cotidiana, sin entrenamientos</label><select id="dailyActivity" name="dailyActivity">${[['sedentary','Mayormente sentado'],['standing','De pie y caminando con frecuencia'],['physical','Trabajo físico moderado']].map(([v,l])=>`<option value="${v}" ${(p.dailyActivity || 'sedentary') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div><div class="field" id="estimated-activity-field"><label for="activity">Nivel de actividad semanal, incluidos entrenamientos</label><select id="activity" name="activity" required>${[['', 'Seleccionar'], ['sedentary', 'Sedentario · poco o ningún ejercicio'], ['light', 'Ligero · 1–3 días por semana'], ['moderate', 'Moderado · 3–5 días por semana'], ['active', 'Alto · 6–7 días por semana'], ['very_active', 'Muy alto · trabajo físico y ejercicio']].map(([value, label]) => `<option value="${value}" ${p.activity === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div class="field"><label for="maxDailyDeficitPercent">Déficit máximo diario (%)</label><input id="maxDailyDeficitPercent" name="maxDailyDeficitPercent" type="number" min="0" max="${maxDailyDeficitPercent}" step="1" value="${p.maxDailyDeficitPercent ?? defaultMaxDailyDeficitPercent}" required><small>Hasta ${maxDailyDeficitPercent} % del mantenimiento. Es un límite de la aplicación, no un máximo médico universal.</small></div><div class="section-gap"><h2>Tu objetivo</h2><div class="grid">${numberField('targetWeight', 'Peso objetivo (kg)', 30, 350, '0.1')}<div class="field"><label for="targetDate">Para qué fecha</label><input id="targetDate" name="targetDate" type="date" min="${shiftDate(localDate(), 1)}" value="${esc(p.targetDate || '')}" required></div></div></div><div id="estimate" class="estimate" ${p.dailyCalories ? '' : 'hidden'}>${p.dailyCalories ? estimateMarkup(p) : ''}</div><p id="profile-error" class="error" role="alert" hidden></p><button class="primary" type="submit">Guardar configuración</button><small>El gasto, las calorías y los macros son estimaciones para adultos.</small></form>${footer()}</div>`;
   syncDock();
+  document.querySelector('#theme-select').onchange = async event => {
+    const select = event.target, previous = user.theme || 'dark';
+    select.disabled = true;
+    applyTheme(select.value);
+    try {
+      const data = await api('/api/preferences', { method: 'PUT', body: { theme: select.value } });
+      user.theme = data.theme;
+    } catch (error) { applyTheme(previous); select.value = previous; toast(error.message, true); }
+    finally { select.disabled = false; }
+  };
   const form = document.querySelector('#profile-form');
-  const profileInput = () => { const value = Object.fromEntries(new FormData(form)); for (const key of ['height', 'age', 'weight', 'targetWeight']) value[key] = Number(value[key]); return value; };
+  const profileInput = () => { const value = Object.fromEntries(new FormData(form)); for (const key of ['height', 'age', 'weight', 'targetWeight', 'maxDailyDeficitPercent']) value[key] = Number(value[key]); if (value.expenditureMode === 'workouts' && !value.activity) value.activity = 'sedentary'; return value; };
+  const syncExpenditureFields = () => {
+    const detailed = form.expenditureMode.value === 'workouts';
+    document.querySelector('#daily-activity-field').hidden = !detailed;
+    document.querySelector('#estimated-activity-field').hidden = detailed;
+    form.activity.required = !detailed;
+    document.querySelector('#expenditure-help').textContent = detailed ? 'El gasto base excluye entrenamientos. Registrá cada sesión para sumar su gasto al día correspondiente.' : 'El nivel semanal ya incluye tus entrenamientos habituales.';
+  };
+  syncExpenditureFields();
   form.oninput = () => {
+    syncExpenditureFields();
     const v = profileInput(), el = document.querySelector('#estimate');
-    if (!v.height || !v.age || !v.weight || !v.targetWeight || !v.gender || !v.activity || v.targetDate <= localDate()) { el.hidden = true; return; }
-    const factor = { sedentary: 1.2, light: 1.375, moderate: 1.55, active: 1.725, very_active: 1.9 }[v.activity];
+    if (!v.height || !v.age || !v.weight || !v.targetWeight || !v.gender || (v.expenditureMode !== 'workouts' && !v.activity) || v.targetDate <= localDate()) { el.hidden = true; return; }
+    const factor = v.expenditureMode === 'workouts' ? dailyActivityFactors[v.dailyActivity] : activityFactors[v.activity];
     const expenditure = Math.round((10 * v.weight + 6.25 * v.height - 5 * v.age + (v.gender === 'male' ? 5 : -161)) * factor);
     const days = Math.round((Date.parse(v.targetDate) - Date.parse(localDate())) / 86400000);
     const requested = Math.round(expenditure + (v.targetWeight - v.weight) * 7700 / days);
@@ -311,7 +445,7 @@ function estimateMarkup(p) {
   const plan = getMacroPlan(p), projection = getGoalProjection(p);
   const goal = { lose: 'Bajar de peso', gain: 'Subir de peso', maintain: 'Mantener el peso' }[plan.goal];
   const date = value => new Intl.DateTimeFormat('es-UY', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T12:00:00Z`));
-  return `<p>Gasto estimado: <strong>${fmt(p.expenditure)} kcal/día</strong><br>Objetivo diario base: <strong>${fmt(p.dailyCalories)} kcal</strong></p><p>${goal}<br>${macroText(plan)}</p>${p.limited ? `<p>${p.requestedCalories < 0 || plan.goal === 'lose' ? 'El plazo solicitado requiere un déficit superior al máximo de 1.200 kcal/día. Se aplica ese límite.' : 'Se aplica un superávit máximo de 500 kcal/día.'}</p>` : ''}${projection ? `<p>Peso estimado al ${date(p.targetDate)}: <strong>${fmt(projection.projectedWeight)} kg</strong><br>${projection.estimatedTargetDate ? `Fecha estimada para llegar a ${fmt(p.targetWeight)} kg: <strong>${date(projection.estimatedTargetDate)}</strong>` : 'Con este ajuste no se proyecta alcanzar el peso objetivo.'}</p><small>Proyección aproximada desde ${date(p.startDate)}, con gasto constante y cumplimiento del objetivo base.</small>` : ''}<p class="budget-explanation">El presupuesto diario y los macros se ajustan con las calorías semanales restantes, de domingo a sábado. El gasto estimado no cambia por este reparto.</p>`;
+  return `<p>Gasto estimado: <strong>${fmt(p.expenditure)} kcal/día</strong><br>Objetivo diario base: <strong>${fmt(p.dailyCalories)} kcal</strong></p><p>${goal}<br>${macroText(plan)}</p>${p.limited ? `<p>${p.requestedCalories < 0 || plan.goal === 'lose' ? `El plazo solicitado supera el déficit máximo configurado de ${fmt(p.maxDailyDeficitPercent ?? 0)} %. Se aplica ese límite.` : 'Se aplica un superávit máximo de 500 kcal/día.'}</p>` : ''}${projection ? `<p>Peso estimado al ${date(p.targetDate)}: <strong>${fmt(projection.projectedWeight)} kg</strong><br>${projection.estimatedTargetDate ? `Fecha estimada para llegar a ${fmt(p.targetWeight)} kg: <strong>${date(projection.estimatedTargetDate)}</strong>` : 'Con este ajuste no se proyecta alcanzar el peso objetivo.'}</p><small>Proyección aproximada desde ${date(p.startDate)}, con gasto constante y cumplimiento del objetivo base.</small>` : ''}<p class="budget-explanation">El presupuesto diario y los macros se ajustan con las calorías semanales restantes, de domingo a sábado. El gasto estimado no cambia por este reparto.</p>`;
 }
 
 function shiftDate(date, days) { const d = new Date(`${date}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); }
@@ -466,12 +600,14 @@ document.addEventListener('click', async e => {
     }
     switch (button.dataset.action) {
       case 'auth-switch': authMode = authMode === 'login' ? 'register' : 'login'; render(); break;
-      case 'day': case 'history': case 'chat':
+      case 'day': case 'history': case 'chat': case 'workouts': case 'statistics':
       case 'settings': await switchView(button.dataset.action); break;
       case 'back': await switchView('day'); break;
-      case 'prev': case 'next': await changeDay(shiftDate(pendingDate || currentDate, button.dataset.action === 'prev' ? -1 : 1)); break;
+      case 'prev': case 'next': await changeSelectedDay(button.dataset.action === 'prev' ? -1 : 1); break;
+      case 'retry-workouts': await changeWorkoutDay(workoutDate, true); break;
       case 'retry-day': await changeDay(currentDate, true); break;
       case 'describe': openDescription(); break;
+      case 'describe-workout': openWorkoutDescription(); break;
       case 'repeat-meal': {
         if (!activeMeal?.selected) { toast('Elegí una opción antes de repetir la comida.'); break; }
         const picker = dialog.querySelector('#repeat-date');
@@ -486,7 +622,7 @@ document.addEventListener('click', async e => {
       case 'write-food': voice.write(); break;
       case 'input-options': voice.choose(); break;
       case 'close': closeModal(); break;
-      case 'logout': await api('/api/logout', { method: 'POST' }); user = null; meals = []; week = null; loadedDate = null; dayRequest++; navigationRequest++; historyRequest++; historyData = null; closeModal(); render(); break;
+      case 'logout': await api('/api/logout', { method: 'POST' }); user = null; statistics = null; statisticsError = ''; statisticsRequest++; workoutsData = null; workoutDate = localDate(); meals = []; week = null; loadedDate = null; dayRequest++; navigationRequest++; historyRequest++; historyData = null; closeModal(); render(); break;
       case 'delete-meal': {
         if (!confirm('¿Eliminar esta comida y su foto?')) return;
         button.disabled = true;
@@ -516,6 +652,6 @@ dialog.addEventListener('click', event => {
 });
 
 bindDaySwipe(root, {
-  isEnabled: () => view === 'day' && !!user?.profile && !dialog.open,
-  onSwipe: direction => { changeDay(shiftDate(pendingDate || currentDate, direction)).catch(error => toast(error.message, true)); }
+  isEnabled: () => ['day', 'workouts'].includes(view) && !!user?.profile && !dialog.open,
+  onSwipe: direction => { changeSelectedDay(direction).catch(error => toast(error.message, true)); }
 });

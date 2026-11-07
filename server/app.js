@@ -1,3 +1,6 @@
+import { installTokenUsage, withTokenTracking, canViewStatistics, tokenStatistics } from './token-usage.js';
+import { installWorkouts, workoutData } from './workouts.js';
+import { analyzeWorkout } from './codex.js';
 import { migrateProfileVersions, appendProfileVersion } from './profile-versions.js';
 import { submissionHandler, submissionReceipt } from './submissions.js';
 import { runAssistant, validateMessages } from './assistant.js';
@@ -24,7 +27,7 @@ const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
-export async function createApplication({ dataDir = path.resolve(process.env.DATA_DIR || 'data'), photoStorage = createPhotoStorage(dataDir), analyzer = analyzePhoto, descriptionAnalyzer = analyzeDescription, assistantRunner = runAssistant, origin = process.env.APP_ORIGIN || 'http://localhost:3086', secureCookies = process.env.COOKIE_SECURE === 'true' } = {}) {
+export async function createApplication({ dataDir = path.resolve(process.env.DATA_DIR || 'data'), photoStorage = createPhotoStorage(dataDir), analyzer = analyzePhoto, descriptionAnalyzer = analyzeDescription, workoutAnalyzer = analyzeWorkout, assistantRunner = runAssistant, origin = process.env.APP_ORIGIN || 'http://localhost:3086', secureCookies = process.env.COOKIE_SECURE === 'true' } = {}) {
   await photoStorage.init();
   const db = new DatabaseSync(path.join(dataDir, 'foodtrack.sqlite'));
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
@@ -36,9 +39,13 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     CREATE TABLE IF NOT EXISTS meal_descriptions(meal_id TEXT PRIMARY KEY REFERENCES meals(id) ON DELETE CASCADE, description TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS profile_goals(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, date TEXT NOT NULL, profile TEXT NOT NULL, PRIMARY KEY(user_id,date));
     PRAGMA user_version=1;`);
+  if (!db.prepare('PRAGMA table_info(users)').all().some(column => column.name === 'theme')) {
+    db.exec("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'dark' CHECK(theme IN ('dark','light'))");
+  }
   await migrateCodexAccess(db, dataDir);
   await migrateProfileVersions(db, dataDir);
   await migrateCaloriePolicy(db, dataDir);
+  const tokenStore = installTokenUsage(db);
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 'loopback');
@@ -78,7 +85,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     db.prepare('INSERT INTO sessions VALUES (?,?,?)').run(hash(token), userId, Date.now() + 30 * 86400000);
     res.cookie('foodtrack_session', token, { httpOnly: true, secure: secureCookies, sameSite: 'strict', maxAge: 30 * 86400000, path: '/' });
   }
-  const publicUser = user => ({ id: user.id, username: user.username, canChat: user.enable_codex_extraction === 1, profile: user.profile ? withMacroPlan(JSON.parse(user.profile)) : null });
+  const publicUser = user => ({ id: user.id, username: user.username, theme: user.theme || 'dark', canChat: user.enable_codex_extraction === 1, canViewStatistics: canViewStatistics(user), profile: user.profile ? withMacroPlan(JSON.parse(user.profile)) : null });
   const credentials = req => {
     const { username, password } = req.body || {};
     if (typeof username !== 'string' || !/^[a-zA-Z0-9_.-]{3,32}$/.test(username) || typeof password !== 'string' || password.length < 10 || password.length > 128) throw fail(400, 'Usá un usuario de 3 a 32 letras, números, puntos o guiones y una contraseña de 10 a 128 caracteres.');
@@ -92,7 +99,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     try { db.prepare('INSERT INTO users(id,username,password) VALUES (?,?,?)').run(id, username, encoded); }
     catch (e) { if (e.message.includes('UNIQUE')) throw fail(409, 'Ese usuario ya existe.'); throw e; }
     await newSession(res, id);
-    res.status(201).json({ user: { id, username, canChat: false, profile: null } });
+    res.status(201).json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id=?').get(id)) });
   });
   app.post('/api/login', authLimit, async (req, res) => {
     const { username, password } = credentials(req);
@@ -107,10 +114,24 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     const token = req.headers.cookie?.split(';').map(s => s.trim()).find(s => s.startsWith('foodtrack_session='))?.slice(18);
     const user = token && db.prepare('SELECT users.* FROM sessions JOIN users ON users.id=sessions.user_id WHERE sessions.token=? AND sessions.expires>?').get(hash(token), Date.now());
     if (!user) return next(fail(401, 'Iniciá sesión para continuar.'));
-    req.user = user; req.sessionHash = hash(token); next();
+    req.user = user; req.sessionHash = hash(token); withTokenTracking(tokenStore(user.id), next);
+  });
+  app.get('/api/statistics', (req, res) => {
+    res.set('Cache-Control','no-store');
+    if (!canViewStatistics(req.user)) throw fail(403, 'No tenés autorización para ver estas estadísticas.');
+    const days = req.query.days === undefined ? 30 : Number(req.query.days);
+    if (![7,30,90].includes(days)) throw fail(400, 'Elegí un período de 7, 30 o 90 días.');
+    res.json(tokenStatistics(db, days));
   });
   app.get('/api/me', (req, res) => res.json({ user: publicUser(req.user), today: today() }));
+  app.put('/api/preferences', (req, res) => {
+    const theme = req.body?.theme;
+    if (!['dark', 'light'].includes(theme)) throw fail(400, 'Elegí un tema oscuro o claro.');
+    db.prepare('UPDATE users SET theme=? WHERE id=?').run(theme, req.user.id);
+    res.json({ theme });
+  });
   app.post('/api/logout', (req, res) => { db.prepare('DELETE FROM sessions WHERE token=?').run(req.sessionHash); res.clearCookie('foodtrack_session', { path: '/', secure: secureCookies, httpOnly: true, sameSite: 'strict' }); res.json({ ok: true }); });
+  const userWorkouts = userId => db.prepare('SELECT * FROM workouts WHERE user_id=? ORDER BY date,created_at').all(userId).map(workoutData);
   const activeChats = new Set();
   app.post('/api/chat', async (req, res) => {
     if (req.user.enable_codex_extraction !== 1) throw fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.');
@@ -126,8 +147,9 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     const goals = db.prepare('SELECT date,profile FROM profile_timeline WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, asOf);
     const profile = req.user.profile ? withMacroPlan(JSON.parse(req.user.profile)) : null;
     const recent = meals.filter(meal => meal.date >= start);
-    const context = { today: asOf, timeZone: 'America/Montevideo', localTime: new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Montevideo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date()), profile, week: profile ? buildWeek({ date: asOf, asOf, meals, goals, profile }) : null,
-      history: buildHistory({ start, end: asOf, meals, goals, asOf }),
+    const context = { today: asOf, timeZone: 'America/Montevideo', localTime: new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Montevideo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date()), profile, week: profile ? buildWeek({ date: asOf, asOf, meals, goals, profile, workouts: userWorkouts(req.user.id) }) : null,
+      history: buildHistory({ start, end: asOf, meals, goals, asOf, workouts: userWorkouts(req.user.id) }),
+      workouts: userWorkouts(req.user.id).filter(w => w.date >= start && w.date <= asOf).map(({ date, description, calories, confirmed }) => ({ date, description, calories, confirmed })),
       meals: recent.slice(-500).map(meal => ({ date: meal.date, food: meal.selected ? (({ name, portion, calories, protein, fat, carbs, details }) => ({ name, portion, calories, protein, fat, carbs, details }))(JSON.parse(meal.selected)) : null })),
       coverage: { days: 90, totalMeals: recent.length, detailedMeals: Math.min(recent.length,500), note: 'Solo comidas confirmadas tienen nutrientes; detalle limitado a las últimas 500 comidas de 90 días. Los totales diarios incluyen todas.' } };
     // IDs, credentials, photo paths and other users never enter the assistant context.
@@ -198,7 +220,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     const weekMeals = db.prepare('SELECT date,selected FROM meals WHERE user_id=? AND date BETWEEN ? AND ?').all(req.user.id, start, end);
     const goals = db.prepare('SELECT date,profile FROM profile_timeline WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, end);
     const effectiveProfile = profileAt(goals, req.query.date);
-    const week = { ...buildWeek({ date: req.query.date, asOf: today(), meals: weekMeals, goals, profile: effectiveProfile }), profile: withMacroPlan(effectiveProfile) };
+    const week = { ...buildWeek({ date: req.query.date, asOf: today(), meals: weekMeals, goals, profile: effectiveProfile, workouts: userWorkouts(req.user.id) }), profile: withMacroPlan(effectiveProfile) };
     sendVersioned(req, res, { meals, week, total: totals.calories, macros: { protein: totals.protein, fat: totals.fat, carbs: totals.carbs, missingMeals: totals.missingMacros } });
   });
   app.get('/api/history', (req, res) => {
@@ -211,16 +233,18 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     const rangeStart = weekRange(balanceStart).start, rangeEnd = weekRange(end).end;
     const meals = db.prepare('SELECT date,selected FROM meals WHERE user_id=? AND date BETWEEN ? AND ? ORDER BY date').all(req.user.id, rangeStart, rangeEnd);
     const goals = db.prepare('SELECT date,profile FROM profile_timeline WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, rangeEnd);
-    const history = buildHistory({ start, end, meals, goals, asOf: today() });
-    history.balanceDays = buildHistory({ start: balanceStart, end, meals, goals, asOf: today() }).days;
+    const history = buildHistory({ start, end, meals, goals, asOf: today(), workouts: userWorkouts(req.user.id) });
+    history.balanceDays = buildHistory({ start: balanceStart, end, meals, goals, asOf: today(), workouts: userWorkouts(req.user.id) }).days;
     sendVersioned(req, res, history);
   });
   const withSubmission = submissionHandler(db, { authorizeReplay: req => {
+    if (req.path === '/api/workouts' && req.user.enable_codex_extraction !== 1) throw fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.');
     if (/\/analyze$/.test(req.path)) {
       ownedMeal(req);
       if (req.user.enable_codex_extraction !== 1) throw Object.assign(fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.'), { code: 'CODEX_EXTRACTION_DISABLED' });
     }
   } });
+  installWorkouts(app, db, withSubmission, workoutAnalyzer);
   app.post('/api/meals/describe', withSubmission((req, res) => {
     if (!req.user.profile) throw fail(400, 'Guardá tu configuración antes de añadir comidas.');
     const { date, description } = req.body || {};
