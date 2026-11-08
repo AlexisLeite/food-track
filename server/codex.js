@@ -37,7 +37,7 @@ async function runCodexImage(imagePath, prompt, schema, fast = true) {
     await writeFile(schemaPath, JSON.stringify(schema));
 
     await new Promise((resolve, reject) => {
-      const args = ['exec', '--json', '--ignore-user-config', '--ignore-rules', '--ephemeral', '--skip-git-repo-check', '-s', 'read-only', '-c', 'approval_policy="never"', '-c', 'service_tier="fast"', '-c', 'features.fast_mode=true', '-c', 'features.shell_tool=false', '-c', 'features.apply_patch_freeform=false', '--output-schema', schemaPath, '--output-last-message', outputPath, '--image', imagePath, '-'];
+      const args = ['exec', '--json', '--ignore-user-config', '--ignore-rules', '--ephemeral', '--skip-git-repo-check', '-s', 'read-only', '-c', 'approval_policy="never"', '-c', 'model_reasoning_effort="low"', '-c', 'service_tier="fast"', '-c', 'features.fast_mode=true', '-c', 'features.shell_tool=false', '-c', 'features.apply_patch_freeform=false', '--output-schema', schemaPath, '--output-last-message', outputPath, '--image', imagePath, '-'];
       if (!imagePath) args.splice(args.indexOf('--image'), 2);
       if (!fast) {
         args.splice(args.indexOf('service_tier="fast"') - 1, 4);

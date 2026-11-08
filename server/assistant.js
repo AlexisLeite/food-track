@@ -90,7 +90,7 @@ ${disabled.map(key=>`${key} = false`).join('\n')}
       await rpc('initialize',{clientInfo:{name:'foodtrack',title:'Comida',version:'1.0.0'}});
       child.stdin.write(JSON.stringify({method:'initialized'})+'\n');
       const {thread}=await rpc('thread/start',{cwd:dir,model:CHAT_MODEL,serviceTier:'default',ephemeral:true,approvalPolicy:'never',sandbox:'read-only',developerInstructions:assistantPrompt(context,[])});
-      await rpc('turn/start',{threadId:thread.id,model:CHAT_MODEL,serviceTier:'default',effort:'medium',input:[{type:'text',text:JSON.stringify(messages),text_elements:[]}]});
+      await rpc('turn/start',{threadId:thread.id,model:CHAT_MODEL,serviceTier:'default',effort:'low',input:[{type:'text',text:JSON.stringify(messages),text_elements:[]}]});
       await done;
       if(!finalText.trim())throw new Error('El asistente no devolvió una respuesta.');
       tokenStatus = 'completed';

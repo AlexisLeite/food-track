@@ -76,6 +76,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   emit({id:msg.id,result:{thread:{id:'thread-test'}}});
  }
  if(msg.method==='turn/start'){
+  if(msg.params.effort!=='low')process.exit(5);
   emit({id:msg.id,result:{turn:{id:'turn-test'}}});
   emit({method:'item/started',params:{item:{type:'webSearch'}}});
   emit({method:'item/agentMessage/delta',params:{itemId:'answer',delta:'Respuesta '}});

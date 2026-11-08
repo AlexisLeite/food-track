@@ -16,7 +16,7 @@ const fs = require('node:fs');
 const args = process.argv.slice(2);
 const schema = JSON.parse(fs.readFileSync(args[args.indexOf('--output-schema') + 1], 'utf8'));
 const workout = !!schema.properties.options?.items?.properties?.activities;
-for (const value of workout ? ['service_tier="default"', 'features.fast_mode=false'] : ['service_tier="fast"', 'features.fast_mode=true']) {
+for (const value of workout ? ['service_tier="default"', 'features.fast_mode=false', 'model_reasoning_effort="low"'] : ['service_tier="fast"', 'features.fast_mode=true', 'model_reasoning_effort="low"']) {
   if (!args.some((arg, i) => arg === '-c' && args[i + 1] === value)) process.exit(2);
 }
 if (!args.includes('--ignore-user-config') || !args.includes('--json')) process.exit(3);
