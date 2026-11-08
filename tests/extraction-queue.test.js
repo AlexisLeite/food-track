@@ -74,3 +74,16 @@ test('client polls durable jobs, tolerates transient network failure, rejects fa
   await assert.rejects(pollExtraction({job:{state:'failed'},error:'Invalid',status:400},{request:()=>{}}),{status:400});
   await assert.rejects(pollExtraction(initial,{isCurrent:()=>false,request:()=>{}}),/sesión cambió/);
 });
+
+test('budget snapshot reports owner-only remaining amounts and exact Uruguay renewal times',()=>{
+  const db=fixture();let date='2026-11-08';const limits=installUsageLimits(db,()=>date);
+  limits.take('a','food','first');limits.take('a','clarification','correction');limits.take('a','chat','message');
+  limits.take('b','food','other');limits.take('b','food','other2');
+  const snapshot=limits.snapshot('a');assert.equal(snapshot.timeZone,'America/Montevideo');
+  assert.deepEqual(snapshot.budgets.food,{limit:56,used:1,remaining:55,periodStart:'2026-11-02',renewsAt:'2026-11-09T00:00:00-03:00'});
+  assert.equal(snapshot.budgets.workout.remaining,56);assert.equal(snapshot.budgets.clarification.remaining,167);assert.equal(snapshot.budgets.chat.remaining,4);
+  assert.equal(limits.snapshot('b').budgets.food.remaining,54);
+  date='2026-11-09';const reset=limits.snapshot('a');assert.equal(reset.budgets.food.remaining,56);assert.equal(reset.budgets.food.renewsAt,'2026-11-16T00:00:00-03:00');assert.equal(reset.budgets.chat.remaining,5);assert.equal(reset.budgets.chat.renewsAt,'2026-11-10T00:00:00-03:00');
+  date='2026-11-08';for(let n=0;n<5;n++)db.prepare('INSERT INTO usage_reservations VALUES(?,?,?,?,?)').run('a','chat',date,`legacy${n}`,new Date().toISOString());
+  assert.equal(limits.snapshot('a').budgets.chat.used,6);assert.equal(limits.snapshot('a').budgets.chat.remaining,0);db.close();
+});

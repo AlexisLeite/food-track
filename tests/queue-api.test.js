@@ -30,8 +30,14 @@ test('async API queues, replays after restart, attributes tokens, enforces sent-
       application.db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(digest(id),id,Date.now()+1000000);
       application.db.prepare('INSERT INTO profile_versions(user_id,date,profile,created_at) VALUES(?,?,?,?)').run(id,today(),JSON.stringify(profile),new Date().toISOString());
     }
+    assert.equal((await request('/api/usage', null)).status,401);
+    const emptyBudget=await request('/api/usage','a'); assert.equal(emptyBudget.status,200); assert.equal(emptyBudget.data.budgets.food.remaining,56);
     const meals=[];
     for(let i=0;i<4;i++)meals.push((await request('/api/meals/describe',i%2?'b':'a',{date:'2020-01-01',description:'Huevos'},`create${i}`)).data.meal);
+    await request('/api/meals/describe','b',{date:'2020-01-01',description:'Otra comida'},'other-budget');
+    assert.equal((await request('/api/usage','b')).data.budgets.food.remaining,53);
+    assert.equal((await request('/api/usage?user_id=b','a')).data.budgets.food.remaining,54);
+    assert.equal((await request('/api/usage','a')).data.budgets.chat.remaining,5);
     const jobs=[];
     for(let i=0;i<4;i++)jobs.push(await request(`/api/meals/${meals[i].id}/analyze`,i%2?'b':'a',{instructions:''},`analyze${i}`));
     assert.ok(jobs.every(r=>r.status===202));await wait(()=>calls===3);assert.equal(calls,3);
@@ -50,6 +56,7 @@ test('async API queues, replays after restart, attributes tokens, enforces sent-
     const day=today(),week=usagePeriod('food',day);
     for(let i=0;i<54;i++)application.db.prepare('INSERT INTO usage_reservations VALUES(?,?,?,?,?)').run('a','food',week,`fill${i}`,new Date().toISOString());
     assert.equal((await request('/api/meals/describe','a',{date:'1999-01-01',description:'No bypass'},'over')).status,429);
+    assert.equal((await request('/api/usage','a')).data.budgets.food.remaining,0);
     await request(`/api/meals/${meals[0].id}`,'a',null,null,'DELETE');
     assert.equal((await request('/api/meals/describe','a',{date:'2099-01-01',description:'No refund'},'over2')).status,429);
     const training=await request('/api/workouts','a',{date:day,description:'Dominadas'},'workout');assert.equal(training.status,202);

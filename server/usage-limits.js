@@ -33,6 +33,16 @@ export function installUsageLimits(db, clock = today) {
     } catch (error) { db.exec('ROLLBACK'); throw error; }
   }
   return {
+    snapshot(userId) {
+      const date = clock();
+      const budgets = Object.fromEntries(Object.entries(usageLimits).map(([kind, limit]) => {
+        const period = usagePeriod(kind, date);
+        const used = db.prepare('SELECT COUNT(*) AS n FROM usage_reservations WHERE user_id=? AND kind=? AND period=?').get(userId, kind, period).n;
+        const renewsOn = dateOffset(period, kind === 'chat' ? 1 : 7);
+        return [kind, { limit, used, remaining: Math.max(0, limit - used), periodStart: period, renewsAt: `${renewsOn}T00:00:00-03:00` }];
+      }));
+      return { timeZone: 'America/Montevideo', budgets };
+    },
     release(userId, kind, key) { db.prepare('DELETE FROM usage_reservations WHERE user_id=? AND kind=? AND request_key=?').run(userId, kind, key); },
     take(userId, kind, key) {
       if (!Object.hasOwn(usageLimits, kind)) throw new Error('Unknown usage kind');

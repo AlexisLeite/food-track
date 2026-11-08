@@ -128,6 +128,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     if (![7,30,90].includes(days)) throw fail(400, 'Elegí un período de 7, 30 o 90 días.');
     res.json(tokenStatistics(db, days));
   });
+  app.get('/api/usage', (req, res) => res.json(limits.snapshot(req.user.id)));
   app.get('/api/me', (req, res) => res.json({ user: publicUser(req.user), today: today() }));
   app.put('/api/password', authLimit, async (req, res) => {
     const { currentPassword, newPassword, confirmPassword } = req.body || {};
