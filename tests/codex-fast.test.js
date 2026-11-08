@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { analyzePhoto, analyzeDescription, estimateMissingMacros, analyzeWorkout } from '../server/codex.js';
 
-test('food evaluations request Fast and workout estimates use standard service even when global config is ignored', async () => {
+test('all evaluations request standard speed and low reasoning even when global config is ignored', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'foodtrack-fast-test-'));
   const original = process.env.CODEX_BIN;
   try {
@@ -16,7 +16,7 @@ const fs = require('node:fs');
 const args = process.argv.slice(2);
 const schema = JSON.parse(fs.readFileSync(args[args.indexOf('--output-schema') + 1], 'utf8'));
 const workout = !!schema.properties.options?.items?.properties?.activities;
-for (const value of workout ? ['service_tier="default"', 'features.fast_mode=false', 'model_reasoning_effort="low"'] : ['service_tier="fast"', 'features.fast_mode=true', 'model_reasoning_effort="low"']) {
+for (const value of ['service_tier="default"', 'features.fast_mode=false', 'model_reasoning_effort="low"']) {
   if (!args.some((arg, i) => arg === '-c' && args[i + 1] === value)) process.exit(2);
 }
 if (!args.includes('--ignore-user-config') || !args.includes('--json')) process.exit(3);
@@ -39,7 +39,9 @@ process.stdin.on('end', () => {fs.writeFileSync(args[args.indexOf('--output-last
     const final=records.filter(r=>r.status==='completed');assert.equal(final.length,6);
     assert.ok(final.every(r=>r.usage?.total===1200 && r.usage.cached===800));
     assert.equal(final.filter(r=>r.source==='workout').length,1);
-    assert.ok(final.every(r=>r.speed===(r.source==='workout'?'standard':'fast')));
+    assert.equal(final.filter(r=>r.source==='photo').length,3);
+    assert.equal(final.filter(r=>r.source==='food').length,2);
+    assert.ok(final.every(r=>r.speed==='standard'));
   } finally {
     if (original === undefined) delete process.env.CODEX_BIN; else process.env.CODEX_BIN = original;
     await rm(dir, { recursive: true, force: true });
