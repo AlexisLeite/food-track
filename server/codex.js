@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const extractionInstructions = fileURLToPath(new URL('./extraction-instructions.txt', import.meta.url));
+const extractionModel = 'gpt-6.1-terra';
 // Extraction needs only the supplied text/image and JSON schema, without agent tools.
 const extractionConfig = [
   'agents.enabled=false', 'skills.bundled.enabled=false', 'skills.include_instructions=false',
@@ -34,12 +35,12 @@ export function validateAnalysis(result) {
   }
   return result;
 }
-let active = false;
+let active = 0;
 async function runCodexImage(imagePath, prompt, schema, source = imagePath ? 'photo' : 'food') {
-  const log = executionLogger('codex_execution', { serviceTier: 'standard', source });
-  if (active) { log('rejected', { reason: 'busy' }); throw Object.assign(new Error('Hay otro análisis en curso. Esperá un momento y volvé a intentar.'), { status: 429, code: 'CODEX_BUSY' }); }
-  active = true; log('started');
-  const tokens = startTokenExecution(source, 'standard');
+  const log = executionLogger('codex_execution', { model: extractionModel, serviceTier: 'fast', source });
+  if (active >= 3) { log('rejected', { reason: 'busy' }); throw Object.assign(new Error('Hay otro análisis en curso. Esperá un momento y volvé a intentar.'), { status: 429, code: 'CODEX_BUSY' }); }
+  active++; log('started');
+  const tokens = startTokenExecution(source, 'fast', extractionModel);
   let tokenStatus = 'failed';
   let dir;
   try {
@@ -49,7 +50,7 @@ async function runCodexImage(imagePath, prompt, schema, source = imagePath ? 'ph
     await writeFile(schemaPath, JSON.stringify(schema));
 
     await new Promise((resolve, reject) => {
-      const args = ['exec', '--json', '--ignore-user-config', '--ignore-rules', '--ephemeral', '--skip-git-repo-check', '-s', 'read-only', '-c', 'approval_policy="never"', '-c', 'model_reasoning_effort="low"', '-c', 'service_tier="default"', '-c', 'features.fast_mode=false', '-c', 'features.shell_tool=false', '-c', 'features.apply_patch_freeform=false', '--output-schema', schemaPath, '--output-last-message', outputPath, '--image', imagePath, '-'];
+      const args = ['exec', '--model', extractionModel, '--json', '--ignore-user-config', '--ignore-rules', '--ephemeral', '--skip-git-repo-check', '-s', 'read-only', '-c', 'approval_policy="never"', '-c', 'model_reasoning_effort="low"', '-c', 'service_tier="fast"', '-c', 'features.fast_mode=true', '-c', 'features.shell_tool=false', '-c', 'features.apply_patch_freeform=false', '--output-schema', schemaPath, '--output-last-message', outputPath, '--image', imagePath, '-'];
       args.push('-c', `model_instructions_file=${JSON.stringify(extractionInstructions)}`, '-c', 'project_doc_max_bytes=0');
       args.push(...extractionConfig.flatMap(value => ['-c', value]));
       if (!imagePath) args.splice(args.indexOf('--image'), 2);
@@ -80,7 +81,7 @@ async function runCodexImage(imagePath, prompt, schema, source = imagePath ? 'ph
     throw error;
   } finally {
     tokens.finish(tokenStatus);
-    active = false;
+    active--;
     if (dir) await rm(dir, { recursive: true, force: true });
   }
 }

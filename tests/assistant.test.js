@@ -65,18 +65,21 @@ test('assistant streams deltas via app-server with an ephemeral fixed-model thre
 const fs=require('node:fs'),readline=require('node:readline'),args=process.argv.slice(2);
 if(args[0]!=='app-server')process.exit(2);
 const config=fs.readFileSync(process.env.CODEX_HOME+'/config.toml','utf8');
-for(const value of ['web_search = "live"','shell_tool = false','unified_exec = false','service_tier = "default"','fast_mode = false','code_mode_host = true'])if(!config.includes(value))process.exit(3);
+for(const value of ['web_search = "live"','shell_tool = false','unified_exec = false','service_tier = "default"','fast_mode = false','code_mode_host = true','[agents]','[skills.bundled]','include_instructions = false'])if(!config.includes(value))process.exit(3);
+const path=JSON.parse(config.match(/^model_instructions_file = (.+)$/m)[1]);
+const instructions=fs.readFileSync(path,'utf8');
+if(instructions.length>1500||!instructions.includes('al menos 3 opciones')||!instructions.includes('búsqueda web'))process.exit(6);
 const emit=value=>console.log(JSON.stringify(value));
 readline.createInterface({input:process.stdin}).on('line',line=>{
  const msg=JSON.parse(line);
  if(!msg.id)return;
  if(msg.method==='initialize')emit({id:msg.id,result:{}});
  if(msg.method==='thread/start'){
-  if(msg.params.model!==${JSON.stringify(CHAT_MODEL)}||msg.params.ephemeral!==true)process.exit(4);
+  if(msg.params.model!=='gpt-6-luna'||msg.params.ephemeral!==true)process.exit(4);
   emit({id:msg.id,result:{thread:{id:'thread-test'}}});
  }
  if(msg.method==='turn/start'){
-  if(msg.params.effort!=='low')process.exit(5);
+  if(msg.params.effort!=='low'||msg.params.model!=='gpt-6-luna')process.exit(5);
   emit({id:msg.id,result:{turn:{id:'turn-test'}}});
   emit({method:'item/started',params:{item:{type:'webSearch'}}});
   emit({method:'item/agentMessage/delta',params:{itemId:'answer',delta:'Respuesta '}});

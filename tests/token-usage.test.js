@@ -88,3 +88,29 @@ test('weekly estimates weight cached input, output and speed; migration preserve
   installTokenUsage(db);assert.equal(db.prepare("SELECT speed FROM token_usage WHERE user_id='d'").get().speed,'standard');
  }finally{db.close();}
 });
+
+test('mixed model statistics preserve raw tokens and apply model and speed weights together',async()=>{
+ const {DatabaseSync}=await import('node:sqlite');
+ const {installTokenUsage,tokenStatistics,withTokenTracking}=await import('../server/token-usage.js');
+ const {weeklyQuotaPercent}=await import('../server/usage-config.js');
+ const db=new DatabaseSync(':memory:');
+ try{
+  db.exec("CREATE TABLE users(id TEXT PRIMARY KEY,username TEXT); INSERT INTO users VALUES('sol','sol'),('terra','terra'),('luna','luna')");
+  const store=installTokenUsage(db),usage={input_tokens:3_000_000,cached_input_tokens:1_500_000,output_tokens:600_000};
+  const usageNormalized=normalizeTokenUsage(usage);
+  const runs=[['sol','gpt-6.1-sol','standard'],['terra','gpt-6.1-terra','fast'],['luna','gpt-6-luna','standard']];
+  for(const [id,model,speed]of runs){
+   withTokenTracking(store(id),()=>{const t=startTokenExecution('food',speed,model);t.report(usage);t.finish('completed');});
+   const saved=db.prepare('SELECT model,speed,input_tokens,cached_tokens,output_tokens FROM token_usage WHERE user_id=?').get(id);
+   assert.deepEqual({...saved},{model,speed,input_tokens:usage.input_tokens,cached_tokens:usage.cached_input_tokens,output_tokens:usage.output_tokens});
+  }
+  const stats=tokenStatistics(db,7);
+  const expected=runs.reduce((n,[,model,speed])=>n+weeklyQuotaPercent(usageNormalized,speed,model),0);
+  assert.ok(Math.abs(stats.totals.weeklyPercent-expected)<1e-10);
+  assert.deepEqual(stats.topUsers.map(u=>u.username),['terra','sol','luna']);
+  assert.equal(stats.totals.total,10_800_000);
+  assert.equal(weeklyQuotaPercent(usageNormalized,'fast','gpt-6.1-terra'),weeklyQuotaPercent(usageNormalized)*1.25);
+  installTokenUsage(db);
+  assert.equal(db.prepare("SELECT model FROM token_usage WHERE user_id='terra'").get().model,'gpt-6.1-terra');
+ }finally{db.close();}
+});

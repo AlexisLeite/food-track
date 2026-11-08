@@ -13,7 +13,7 @@ export function submissionHandler(db, { authorizeReplay = () => {} } = {}) {
     const receipt = submissionReceipt(db, req);
     if (!receipt) return handler(req, res);
     const { id, key } = receipt;
-    if (receipt.response) { authorizeReplay(req); return res.status(receipt.status).json(receipt.response); }
+    if (receipt.response) { authorizeReplay(req, receipt.response); return res.status(receipt.status).json(receipt.response); }
     if (active.has(key)) throw Object.assign(new Error('El envío anterior todavía se está procesando. Reintentá en unos instantes.'), { status: 409 });
     active.add(key);
     const original = res.json;

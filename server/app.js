@@ -1,3 +1,6 @@
+import { createExtractionQueue } from './extraction-queue.js';
+import { installUsageLimits } from './usage-limits.js';
+import { createSemaphore } from './semaphore.js';
 import { installTokenUsage, withTokenTracking, canViewStatistics, tokenStatistics } from './token-usage.js';
 import { installWorkouts, workoutData } from './workouts.js';
 import { analyzeWorkout } from './codex.js';
@@ -46,6 +49,8 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
   await migrateProfileVersions(db, dataDir);
   await migrateCaloriePolicy(db, dataDir);
   const tokenStore = installTokenUsage(db);
+  const limits = installUsageLimits(db);
+  const extractionQueue = createExtractionQueue(db, { runAs: (userId, callback) => withTokenTracking(tokenStore(userId), callback) });
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 'loopback');
@@ -152,6 +157,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
   app.post('/api/logout', (req, res) => { db.prepare('DELETE FROM sessions WHERE token=?').run(req.sessionHash); res.clearCookie('foodtrack_session', { path: '/', secure: secureCookies, httpOnly: true, sameSite: 'strict' }); res.json({ ok: true }); });
   const userWorkouts = userId => db.prepare('SELECT * FROM workouts WHERE user_id=? ORDER BY date,created_at').all(userId).map(workoutData);
   const activeChats = new Set();
+  const chatQueue = createSemaphore(3);
   app.post('/api/chat', async (req, res) => {
     if (req.user.enable_codex_extraction !== 1) throw fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.');
     const messages = validateMessages(req.body?.messages);
@@ -160,7 +166,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
       res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
       return res.end(`data: ${JSON.stringify({ type: 'message', ...receipt.response })}\n\n`);
     }
-    if (activeChats.has(req.user.id) || activeChats.size >= 2) throw fail(429, 'El asistente está ocupado. Esperá un momento.');
+    if (activeChats.has(req.user.id)) throw fail(429, 'El asistente está ocupado. Esperá un momento.');
     const asOf = today(), start = dateOffset(asOf, -89);
     const meals = db.prepare('SELECT date,selected FROM meals WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, asOf);
     const goals = db.prepare('SELECT date,profile FROM profile_timeline WHERE user_id=? AND date<=? ORDER BY date').all(req.user.id, asOf);
@@ -172,6 +178,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
       meals: recent.slice(-500).map(meal => ({ date: meal.date, food: meal.selected ? (({ name, portion, calories, protein, fat, carbs, details }) => ({ name, portion, calories, protein, fat, carbs, details }))(JSON.parse(meal.selected)) : null })),
       coverage: { days: 90, totalMeals: recent.length, detailedMeals: Math.min(recent.length,500), note: 'Solo comidas confirmadas tienen nutrientes; detalle limitado a las últimas 500 comidas de 90 días. Los totales diarios incluyen todas.' } };
     // IDs, credentials, photo paths and other users never enter the assistant context.
+    limits.take(req.user.id, 'chat', receipt?.id || randomUUID());
     activeChats.add(req.user.id);
     const controller = new AbortController();
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
@@ -179,7 +186,11 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     const send = (type, data) => { if (!res.destroyed) res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`); };
     const heartbeat = setInterval(() => { if (!res.destroyed) res.write(': keepalive\n\n'); }, 15000);
     res.once('close', () => controller.abort());
+    let releaseChat;
     try {
+      send('status', { text: 'Esperando al asistente…' });
+      releaseChat = await chatQueue.acquire(controller.signal);
+      if (db.prepare('SELECT enable_codex_extraction FROM users WHERE id=?').get(req.user.id)?.enable_codex_extraction !== 1) throw fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.');
       send('status', { text: 'Revisando tus registros…' });
       const text = await assistantRunner({ context, messages, signal: controller.signal, onStatus: text => send('status', { text }), onText: text => {
         if (db.prepare('SELECT enable_codex_extraction FROM users WHERE id=?').get(req.user.id)?.enable_codex_extraction !== 1) controller.abort();
@@ -194,7 +205,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     } catch (error) {
       logExecution('assistant_request', { phase: 'failed', userId: req.user.id, aborted: controller.signal.aborted });
       if (!controller.signal.aborted) send('error', { text: error.message || 'El asistente no pudo responder.' });
-    } finally { clearInterval(heartbeat); activeChats.delete(req.user.id); res.end(); }
+    } finally { releaseChat?.(); clearInterval(heartbeat); activeChats.delete(req.user.id); res.end(); }
   });
   app.put('/api/profile', (req, res) => {
     let profile;
@@ -219,9 +230,9 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     const analyses = db.prepare('SELECT * FROM analyses WHERE meal_id=? ORDER BY created_at DESC, rowid DESC').all(meal.id).map(a => ({ ...a, options: JSON.parse(a.options) }));
     return { id: meal.id, date: meal.date, photoUrl: meal.photo ? `/api/meals/${meal.id}/photo` : null, description: meal.photo ? null : db.prepare('SELECT description FROM meal_descriptions WHERE meal_id=?').get(meal.id)?.description || '', selected: meal.selected ? JSON.parse(meal.selected) : null, analyses, createdAt: meal.created_at };
   }
-  function insertAnalysis(mealId, instructions, result) {
+  function insertAnalysis(mealId, instructions, result, id = randomUUID()) {
     validateAnalysis(result);
-    db.prepare('INSERT INTO analyses(id,meal_id,instructions,description,options,created_at) VALUES (?,?,?,?,?,?)').run(randomUUID(), mealId, instructions, result.description, JSON.stringify(result.options), new Date().toISOString());
+    db.prepare('INSERT INTO analyses(id,meal_id,instructions,description,options,created_at) VALUES (?,?,?,?,?,?)').run(id, mealId, instructions, result.description, JSON.stringify(result.options), new Date().toISOString());
   }
   function sendVersioned(req, res, data) {
     const etag = `"${hash(JSON.stringify(data))}"`;
@@ -256,14 +267,16 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     history.balanceDays = buildHistory({ start: balanceStart, end, meals, goals, asOf: today(), workouts: userWorkouts(req.user.id) }).days;
     sendVersioned(req, res, history);
   });
-  const withSubmission = submissionHandler(db, { authorizeReplay: req => {
-    if (req.path === '/api/workouts' && req.user.enable_codex_extraction !== 1) throw fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.');
-    if (/\/analyze$/.test(req.path)) {
+  const withSubmission = submissionHandler(db, { authorizeReplay: (req, response) => {
+    if (response?.job) extractionQueue.retry(response.job.id, req.user.id);
+    if (req.path.startsWith('/api/workouts') && req.user.enable_codex_extraction !== 1) throw fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.');
+    if (/^\/api\/meals\/.*\/analyze$/.test(req.path)) {
       ownedMeal(req);
       if (req.user.enable_codex_extraction !== 1) throw Object.assign(fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.'), { code: 'CODEX_EXTRACTION_DISABLED' });
     }
   } });
-  installWorkouts(app, db, withSubmission, workoutAnalyzer);
+  installWorkouts(app, db, withSubmission, workoutAnalyzer, extractionQueue, limits);
+  app.get('/api/extractions/:id', (req, res) => res.json(extractionQueue.read(req.params.id, req.user.id)));
   app.post('/api/meals/describe', withSubmission((req, res) => {
     if (!req.user.profile) throw fail(400, 'Guardá tu configuración antes de añadir comidas.');
     const { date, description } = req.body || {};
@@ -272,6 +285,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     const id = randomUUID();
     db.exec('BEGIN IMMEDIATE');
     try {
+      limits.take(req.user.id, 'food', `meal:${id}`);
       db.prepare('INSERT INTO meals VALUES (?,?,?,?,?,?)').run(id, req.user.id, date, '', null, new Date().toISOString());
       db.prepare('INSERT INTO meal_descriptions VALUES (?,?)').run(id, description.trim());
       db.exec('COMMIT');
@@ -331,8 +345,11 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     let image;
     try { image = await sharp(req.file.buffer, { limitInputPixels: 40000000 }).rotate().resize(1600, 1600, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer(); }
     catch { throw fail(400, 'No se pudo leer la imagen. Usá una foto JPG, PNG o WebP.'); }
-    await photoStorage.write(photo, image);
-    db.prepare('INSERT INTO meals VALUES (?,?,?,?,?,?)').run(id, req.user.id, req.body.date, photo, null, new Date().toISOString());
+    limits.take(req.user.id, 'food', `meal:${id}`);
+    try {
+      await photoStorage.write(photo, image);
+      db.prepare('INSERT INTO meals VALUES (?,?,?,?,?,?)').run(id, req.user.id, req.body.date, photo, null, new Date().toISOString());
+    } catch (error) { limits.release(req.user.id, 'food', `meal:${id}`); await photoStorage.remove(photo).catch(() => {}); throw error; }
     // Keep the uploaded meal even if Codex is unavailable, so analysis can be retried.
     res.status(201).json({ meal: mealData(db.prepare('SELECT * FROM meals WHERE id=?').get(id)) });
   }));
@@ -363,31 +380,28 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
       log('failed', { status: e.status }); throw e;
     }
   }));
-  const analyzing = new Set();
+  extractionQueue.register('food', async job => {
+    const meal = ownedMeal({ params: { id: job.resource_id }, user: { id: job.user_id } });
+    if (db.prepare('SELECT id FROM analyses WHERE id=?').get(job.id)) return { meal: mealData(meal) };
+    const { instructions } = job.payload;
+    const prior = db.prepare('SELECT instructions FROM analyses WHERE meal_id=? ORDER BY created_at,rowid').all(meal.id).map(a => a.instructions).filter(Boolean);
+    const context = prior.length ? `Correcciones anteriores (conservar salvo contradicción explícita): ${JSON.stringify(prior.slice(-10))}. Nueva corrección: ${instructions}` : instructions;
+    const result = meal.photo
+      ? await photoStorage.withFile(meal.photo, file => analyzer(file, context))
+      : await descriptionAnalyzer(db.prepare('SELECT description FROM meal_descriptions WHERE meal_id=?').get(meal.id)?.description || '', context);
+    if (db.prepare('SELECT enable_codex_extraction FROM users WHERE id=?').get(job.user_id)?.enable_codex_extraction !== 1) throw fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.');
+    insertAnalysis(meal.id, instructions, result, job.id);
+    return { meal: mealData(meal) };
+  });
   app.post('/api/meals/:id/analyze', withSubmission(async (req, res) => {
     const meal = ownedMeal(req);
-    if (req.user.enable_codex_extraction !== 1) {
-      logExecution('meal_analysis', { outcome: 'denied', userId: req.user.id, mealId: meal.id, reason: 'CODEX_EXTRACTION_DISABLED' });
-      throw Object.assign(fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.'), { code: 'CODEX_EXTRACTION_DISABLED' });
-    }
     const instructions = req.body?.instructions ?? '';
     if (typeof instructions !== 'string' || instructions.length > 1500) throw fail(400, 'Las instrucciones pueden tener hasta 1500 caracteres.');
-    if (analyzing.has(meal.id)) throw fail(409, 'Esta foto ya se está analizando.');
-    analyzing.add(meal.id);
-    const analysisStarted = Date.now();
-    const logAnalysis = (outcome, extra = {}) => logExecution('meal_analysis', { outcome, userId: req.user.id, mealId: meal.id, source: meal.photo ? 'photo' : 'description', elapsedMs: Date.now() - analysisStarted, ...extra });
-    try {
-      const prior = db.prepare('SELECT instructions FROM analyses WHERE meal_id=? ORDER BY created_at, rowid').all(meal.id).map(a => a.instructions).filter(Boolean);
-      const context = prior.length ? `Correcciones anteriores (conservar salvo contradicción explícita): ${JSON.stringify(prior.slice(-10))}. Nueva corrección: ${instructions}` : instructions;
-      const result = meal.photo
-        ? await photoStorage.withFile(meal.photo, file => analyzer(file, context))
-        : await descriptionAnalyzer(db.prepare('SELECT description FROM meal_descriptions WHERE meal_id=?').get(meal.id)?.description || '', context);
-      if (!db.prepare('SELECT id FROM meals WHERE id=? AND user_id=?').get(meal.id, req.user.id)) throw fail(404, 'La comida fue eliminada.');
-      insertAnalysis(meal.id, instructions, result);
-      logAnalysis(result.options.length ? 'completed' : 'empty', { optionCount: result.options.length });
-      res.json({ meal: mealData(db.prepare('SELECT * FROM meals WHERE id=?').get(meal.id)) });
-    } catch (e) { if (!e.status) e.status = 502; logAnalysis('failed', { status: e.status, reason: ['CODEX_BUSY', 'CODEX_START_FAILED', 'CODEX_TIMEOUT', 'CODEX_EXIT_FAILED'].includes(e.code) ? e.code : 'ANALYSIS_ERROR' }); throw e; }
-    finally { analyzing.delete(meal.id); }
+    const correction = !!db.prepare('SELECT id FROM analyses WHERE meal_id=? LIMIT 1').get(meal.id);
+    const id = extractionQueue.enqueue({ userId: req.user.id, kind: 'food', resourceId: meal.id, payload: { instructions },
+      key: req.get('X-Submission-ID') || randomUUID(),
+      reserve: jobId => limits.take(req.user.id, correction ? 'clarification' : 'food', correction ? jobId : `meal:${meal.id}`) });
+    await extractionQueue.respond(req, res, id);
   }));
   app.put('/api/meals/:id/selection', (req, res) => {
     const meal = ownedMeal(req);
@@ -400,7 +414,7 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
   });
   app.delete('/api/meals/:id', async (req, res) => {
     const meal = ownedMeal(req);
-    if (analyzing.has(meal.id)) throw fail(409, 'Esperá a que termine el análisis para eliminar esta comida.');
+    if (extractionQueue.active(meal.id)) throw fail(409, 'Esperá a que termine el análisis para eliminar esta comida.');
     db.prepare('DELETE FROM meals WHERE id=?').run(meal.id);
     if (meal.photo) await photoStorage.remove(meal.photo).catch(() => {});
     res.json({ ok: true });
@@ -412,7 +426,8 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     if (err instanceof multer.MulterError) status = 400;
     const message = err.code === 'LIMIT_FILE_SIZE' ? 'El archivo supera el tamaño permitido (12 MB para fotos, 8 MB para audio).' : err instanceof multer.MulterError ? 'Subí una sola foto de hasta 12 MB.' : status < 500 || status === 502 ? err.message : 'Ocurrió un error. Volvé a intentarlo.';
     if (status === 500) console.error('Request failed:', err.code || err.name);
-    res.status(status).json({ error: message, ...(err.code === 'CODEX_EXTRACTION_DISABLED' ? { code: err.code } : {}) });
+    res.status(status).json({ error: message, ...(['CODEX_EXTRACTION_DISABLED', 'USAGE_LIMIT'].includes(err.code) ? { code: err.code } : {}) });
   });
-  return { app, db, photoStorage };
+  extractionQueue.start();
+  return { app, db, photoStorage, extractionQueue };
 }

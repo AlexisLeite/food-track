@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { analyzePhoto, analyzeDescription, estimateMissingMacros, analyzeWorkout } from '../server/codex.js';
 
-test('all evaluations request standard speed and low reasoning even when global config is ignored', async () => {
+test('all evaluations request Terra fast and low reasoning even when global config is ignored', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'foodtrack-fast-test-'));
   const original = process.env.CODEX_BIN;
   try {
@@ -16,10 +16,11 @@ const fs = require('node:fs');
 const args = process.argv.slice(2);
 const schema = JSON.parse(fs.readFileSync(args[args.indexOf('--output-schema') + 1], 'utf8'));
 const workout = !!schema.properties.options?.items?.properties?.activities;
-for (const value of ['service_tier="default"', 'features.fast_mode=false', 'model_reasoning_effort="low"', 'project_doc_max_bytes=0', 'agents.enabled=false', 'skills.bundled.enabled=false', 'skills.include_instructions=false', 'web_search="disabled"', 'personality="none"', ...['apps','remote_plugin','multi_agent','multi_agent_v2','code_mode','code_mode_host','goals','memories','skill_search','view_image','image_generation','browser_use','computer_use','hooks','sleep_tool','default_mode_request_user_input','tool_suggest'].map(key=>'features.'+key+'=false')]) {
+for (const value of ['service_tier="fast"', 'features.fast_mode=true', 'model_reasoning_effort="low"', 'project_doc_max_bytes=0', 'agents.enabled=false', 'skills.bundled.enabled=false', 'skills.include_instructions=false', 'web_search="disabled"', 'personality="none"', ...['apps','remote_plugin','multi_agent','multi_agent_v2','code_mode','code_mode_host','goals','memories','skill_search','view_image','image_generation','browser_use','computer_use','hooks','sleep_tool','default_mode_request_user_input','tool_suggest'].map(key=>'features.'+key+'=false')]) {
   if (!args.some((arg, i) => arg === '-c' && args[i + 1] === value)) process.exit(2);
 }
 if (!args.includes('--ignore-user-config') || !args.includes('--json')) process.exit(3);
+if (args[args.indexOf('--model') + 1] !== 'gpt-6.1-terra') process.exit(6);
 const instructionsArg = args.find(arg => arg.startsWith('model_instructions_file='));
 if (!instructionsArg) process.exit(4);
 const instructions = fs.readFileSync(JSON.parse(instructionsArg.slice('model_instructions_file='.length)), 'utf8');
@@ -45,7 +46,7 @@ process.stdin.on('end', () => {fs.writeFileSync(args[args.indexOf('--output-last
     assert.equal(final.filter(r=>r.source==='workout').length,1);
     assert.equal(final.filter(r=>r.source==='photo').length,3);
     assert.equal(final.filter(r=>r.source==='food').length,2);
-    assert.ok(final.every(r=>r.speed==='standard'));
+    assert.ok(final.every(r=>r.speed==='fast' && r.model==='gpt-6.1-terra'));
   } finally {
     if (original === undefined) delete process.env.CODEX_BIN; else process.env.CODEX_BIN = original;
     await rm(dir, { recursive: true, force: true });

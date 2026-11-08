@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { profileAt } from './history.js';
 import { validDate, today } from './nutrition.js';
-import { logExecution } from './execution-log.js';
 const fail = (status, message) => Object.assign(new Error(message), { status });
 export function workoutEstimate(result, weight) {
   if (!Number.isFinite(weight) || weight < 30 || weight > 350) throw fail(400, 'No hay un peso válido para esa fecha.');
@@ -24,7 +23,7 @@ export function workoutOptions(result, weight) {
   return { options, weight, selectedIndex: null };
 }
 export const workoutData = row => ({ id: row.id, date: row.date, description: row.description, estimate: JSON.parse(row.estimate), confirmed: !!row.confirmed, calories: row.confirmed ? JSON.parse(row.estimate).calories : 0, createdAt: row.created_at });
-export function installWorkouts(app, db, withSubmission, analyzer) {
+export function installWorkouts(app, db, withSubmission, analyzer, queue, limits) {
   db.exec(`CREATE TABLE IF NOT EXISTS workouts(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,date TEXT NOT NULL,description TEXT NOT NULL,estimate TEXT NOT NULL,confirmed INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS workouts_user_date ON workouts(user_id,date);`);
   const getProfile = (userId, date) => profileAt(db.prepare('SELECT date,profile FROM profile_timeline WHERE user_id=? AND date<=? ORDER BY date').all(userId, date), date);
@@ -45,16 +44,41 @@ export function installWorkouts(app, db, withSubmission, analyzer) {
     const profile = getProfile(req.user.id, date);
     if (profile?.expenditureMode !== 'workouts') throw fail(400, 'Elegí el perfil de gasto Por entrenamientos para esa fecha.');
     if (typeof description !== 'string' || !description.trim() || description.length > 1500) throw fail(400, 'Describí el entrenamiento en hasta 1500 caracteres.');
-    logExecution('workout_analysis', { phase: 'started', userId: req.user.id });
-    try {
-      const estimate = workoutOptions(await analyzer(description), profile.weight);
-      if (db.prepare('SELECT enable_codex_extraction FROM users WHERE id=?').get(req.user.id)?.enable_codex_extraction !== 1) throw fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.');
-      const id = randomUUID();
-      db.prepare('INSERT INTO workouts(id,user_id,date,description,estimate,created_at) VALUES(?,?,?,?,?,?)').run(id, req.user.id, date, description.trim(), JSON.stringify(estimate), new Date().toISOString());
-      logExecution('workout_analysis', { phase: 'completed', userId: req.user.id, workoutId: id });
-      res.status(201).json({ workout: workoutData(db.prepare('SELECT * FROM workouts WHERE id=?').get(id)) });
-    } catch (e) { logExecution('workout_analysis', { phase: 'failed', userId: req.user.id }); e.status ||= 502; throw e; }
+    const id = queue.enqueue({ userId: req.user.id, kind: 'workout', resourceId: req.get('X-Submission-ID') || randomUUID(), payload: { date, description: description.trim(), weight: profile.weight }, key: req.get('X-Submission-ID') || randomUUID(), reserve: id => limits.take(req.user.id, 'workout', id) });
+    await queue.respond(req, res, id, 201);
   }));
+  queue.register('workout', async job => {
+    const previous = db.prepare('SELECT * FROM workouts WHERE id=?').get(job.id);
+    if (previous) return { workout: workoutData(previous) };
+    const { date, description, weight } = job.payload;
+    const estimate = workoutOptions(await analyzer(description), weight);
+    if (db.prepare('SELECT enable_codex_extraction FROM users WHERE id=?').get(job.user_id)?.enable_codex_extraction !== 1) throw fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.');
+    db.prepare('INSERT INTO workouts(id,user_id,date,description,estimate,created_at) VALUES(?,?,?,?,?,?)').run(job.id, job.user_id, date, description, JSON.stringify(estimate), job.created_at);
+    return { workout: workoutData(db.prepare('SELECT * FROM workouts WHERE id=?').get(job.id)) };
+  });
+  db.exec(`CREATE TABLE IF NOT EXISTS workout_clarifications(id TEXT PRIMARY KEY,workout_id TEXT NOT NULL REFERENCES workouts(id) ON DELETE CASCADE,instructions TEXT NOT NULL,estimate TEXT NOT NULL,created_at TEXT NOT NULL);`);
+  app.post('/api/workouts/:id/analyze', withSubmission(async (req, res) => {
+    const workout = owned(req), instructions = req.body?.instructions;
+    if (typeof instructions !== 'string' || !instructions.trim() || instructions.length > 1500) throw fail(400, 'Describí la aclaración en hasta 1500 caracteres.');
+    const id = queue.enqueue({ userId: req.user.id, kind: 'workout-clarification', resourceId: workout.id, payload: { instructions: instructions.trim() }, key: req.get('X-Submission-ID') || randomUUID(), reserve: id => limits.take(req.user.id, 'clarification', id) });
+    await queue.respond(req, res, id);
+  }));
+  queue.register('workout-clarification', async job => {
+    const row = owned({ user: { id: job.user_id }, params: { id: job.resource_id } });
+    if (db.prepare('SELECT id FROM workout_clarifications WHERE id=?').get(job.id)) return { workout: workoutData(row) };
+    const prior = db.prepare('SELECT instructions FROM workout_clarifications WHERE workout_id=? ORDER BY created_at,rowid').all(row.id).map(a => a.instructions);
+    const context = `${row.description}\nCorrecciones anteriores: ${JSON.stringify(prior.slice(-10))}\nNueva corrección: ${job.payload.instructions}`;
+    const estimate = workoutOptions(await analyzer(context), JSON.parse(row.estimate).weight);
+    if (db.prepare('SELECT enable_codex_extraction FROM users WHERE id=?').get(job.user_id)?.enable_codex_extraction !== 1) throw fail(403, 'No tenés autorización para usar esta función. Contactá con el administrador.');
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare('INSERT INTO workout_clarifications VALUES(?,?,?,?,?)').run(job.id,row.id,job.payload.instructions,JSON.stringify(estimate),new Date().toISOString());
+      // Keep the confirmed expenditure until the user chooses a revised option.
+      db.prepare('UPDATE workouts SET estimate=? WHERE id=?').run(JSON.stringify({ ...JSON.parse(row.estimate), ...estimate }), row.id);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    return { workout: workoutData(db.prepare('SELECT * FROM workouts WHERE id=?').get(row.id)) };
+  });
   app.put('/api/workouts/:id/confirm', (req, res) => {
     const row = owned(req);
     if (getProfile(req.user.id, row.date)?.expenditureMode !== 'workouts') throw fail(400, 'Este día no usa el perfil Por entrenamientos.');
@@ -67,5 +91,5 @@ export function installWorkouts(app, db, withSubmission, analyzer) {
     db.prepare('UPDATE workouts SET confirmed=1,estimate=? WHERE id=?').run(JSON.stringify(estimate), row.id);
     res.json({ workout: workoutData(db.prepare('SELECT * FROM workouts WHERE id=?').get(row.id)) });
   });
-  app.delete('/api/workouts/:id', (req, res) => { const row = owned(req); db.prepare('DELETE FROM workouts WHERE id=?').run(row.id); res.json({ ok: true }); });
+  app.delete('/api/workouts/:id', (req, res) => { const row = owned(req); if (queue.active(row.id)) throw fail(409, 'Esperá a que termine el análisis para eliminar este entrenamiento.'); db.prepare('DELETE FROM workouts WHERE id=?').run(row.id); res.json({ ok: true }); });
 }
