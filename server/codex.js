@@ -6,6 +6,18 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const extractionInstructions = fileURLToPath(new URL('./extraction-instructions.txt', import.meta.url));
+// Extraction needs only the supplied text/image and JSON schema, without agent tools.
+const extractionConfig = [
+  'agents.enabled=false', 'skills.bundled.enabled=false', 'skills.include_instructions=false',
+  'web_search="disabled"', 'personality="none"',
+  ...['apps', 'remote_plugin', 'multi_agent', 'multi_agent_v2', 'code_mode', 'code_mode_host',
+    'goals', 'memories', 'skill_search', 'view_image', 'image_generation', 'browser_use',
+    'computer_use', 'hooks', 'sleep_tool', 'default_mode_request_user_input', 'tool_suggest']
+    .map(feature => `features.${feature}=false`)
+];
 
 const schema = {
   type: 'object', additionalProperties: false, required: ['description', 'options'], properties: {
@@ -38,6 +50,8 @@ async function runCodexImage(imagePath, prompt, schema, source = imagePath ? 'ph
 
     await new Promise((resolve, reject) => {
       const args = ['exec', '--json', '--ignore-user-config', '--ignore-rules', '--ephemeral', '--skip-git-repo-check', '-s', 'read-only', '-c', 'approval_policy="never"', '-c', 'model_reasoning_effort="low"', '-c', 'service_tier="default"', '-c', 'features.fast_mode=false', '-c', 'features.shell_tool=false', '-c', 'features.apply_patch_freeform=false', '--output-schema', schemaPath, '--output-last-message', outputPath, '--image', imagePath, '-'];
+      args.push('-c', `model_instructions_file=${JSON.stringify(extractionInstructions)}`, '-c', 'project_doc_max_bytes=0');
+      args.push(...extractionConfig.flatMap(value => ['-c', value]));
       if (!imagePath) args.splice(args.indexOf('--image'), 2);
       const child = spawn(process.env.CODEX_BIN || '/usr/local/bin/codex', args, { cwd: dir, env: { PATH: process.env.PATH, HOME: process.env.HOME, ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}) }, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
       const lines = createInterface({ input: child.stdout });

@@ -16,10 +16,14 @@ const fs = require('node:fs');
 const args = process.argv.slice(2);
 const schema = JSON.parse(fs.readFileSync(args[args.indexOf('--output-schema') + 1], 'utf8'));
 const workout = !!schema.properties.options?.items?.properties?.activities;
-for (const value of ['service_tier="default"', 'features.fast_mode=false', 'model_reasoning_effort="low"']) {
+for (const value of ['service_tier="default"', 'features.fast_mode=false', 'model_reasoning_effort="low"', 'project_doc_max_bytes=0', 'agents.enabled=false', 'skills.bundled.enabled=false', 'skills.include_instructions=false', 'web_search="disabled"', 'personality="none"', ...['apps','remote_plugin','multi_agent','multi_agent_v2','code_mode','code_mode_host','goals','memories','skill_search','view_image','image_generation','browser_use','computer_use','hooks','sleep_tool','default_mode_request_user_input','tool_suggest'].map(key=>'features.'+key+'=false')]) {
   if (!args.some((arg, i) => arg === '-c' && args[i + 1] === value)) process.exit(2);
 }
 if (!args.includes('--ignore-user-config') || !args.includes('--json')) process.exit(3);
+const instructionsArg = args.find(arg => arg.startsWith('model_instructions_file='));
+if (!instructionsArg) process.exit(4);
+const instructions = fs.readFileSync(JSON.parse(instructionsArg.slice('model_instructions_file='.length)), 'utf8');
+if (!instructions.includes('No uses herramientas') || instructions.length > 1000) process.exit(5);
 const result = workout ? {options:[1,2,3].map(i=>({name:'Moderado '+i,details:'Supuesto',activities:[{name:'Caminar',minutes:30,met:4}]}))} : schema.required.includes('description')
   ? { description: 'Comida', options: [{ name: 'Huevos', portion: 'Dos unidades', calories: 142, protein: 12, fat: 10, carbs: 1, details: 'Estimación' }] }
   : { options: [{ index: 0, protein: 12, fat: 10, carbs: 1 }] };
