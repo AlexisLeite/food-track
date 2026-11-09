@@ -126,7 +126,13 @@ export async function createApplication({ dataDir = path.resolve(process.env.DAT
     if (!canViewStatistics(req.user)) throw fail(403, 'No tenés autorización para ver estas estadísticas.');
     const days = req.query.days === undefined ? 30 : Number(req.query.days);
     if (![7,30,90].includes(days)) throw fail(400, 'Elegí un período de 7, 30 o 90 días.');
-    res.json(tokenStatistics(db, days));
+    let selectedUser = null;
+    if (req.query.username !== undefined) {
+      if (typeof req.query.username !== 'string' || !/^[a-zA-Z0-9_.-]{3,32}$/.test(req.query.username)) throw fail(400, 'Usuario inválido.');
+      selectedUser = db.prepare('SELECT id,username FROM users WHERE username=?').get(req.query.username.toLowerCase());
+      if (!selectedUser) throw fail(404, 'No se encontró el usuario.');
+    }
+    res.json({ ...tokenStatistics(db, days, selectedUser?.id ?? null), selectedUser: selectedUser?.username ?? null });
   });
   app.get('/api/usage', (req, res) => res.json(limits.snapshot(req.user.id)));
   app.get('/api/me', (req, res) => res.json({ user: publicUser(req.user), today: today() }));

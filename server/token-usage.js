@@ -56,7 +56,7 @@ export function installTokenUsage(db) {
     insert.run(id,userId,today(),source,status,usage?.input ?? null,usage?.output ?? null,usage?.cached ?? null,usage?.reasoning ?? null,usage?.total ?? null,new Date().toISOString(),speed,model);
   } });
 }
-export function tokenStatistics(db, days = 30) {
+export function tokenStatistics(db, days = 30, userId = null) {
   const end = today(), start = dateOffset(end, 1 - days);
   const startedAt = db.prepare('SELECT started_at FROM token_usage_meta WHERE id=1').get().started_at;
   const trackingDate = new Intl.DateTimeFormat('en-CA',{timeZone:'America/Montevideo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(startedAt));
@@ -64,9 +64,11 @@ export function tokenStatistics(db, days = 30) {
   const modelFactor = key => `CASE model ${Object.entries(tokenModelWeight).map(([model, weight]) => `WHEN '${model}' THEN ${weight[key]}`).join(' ')} ELSE 1 END`;
   const percentage = `COALESCE(SUM(100.0 * ((input_tokens-cached_tokens)*(${modelFactor('input')})/${weeklyTokenCapacity.input}.0 + cached_tokens*(${modelFactor('cached')})/${weeklyTokenCapacity.cached}.0 + output_tokens*(${modelFactor('output')})/${weeklyTokenCapacity.output}.0) * CASE speed WHEN 'fast' THEN ${tokenSpeedMultiplier.fast} WHEN 'ultrafast' THEN ${tokenSpeedMultiplier.ultrafast} ELSE ${tokenSpeedMultiplier.standard} END),0)`;
   const sums = `COALESCE(SUM(input_tokens),0) AS input,COALESCE(SUM(output_tokens),0) AS output,COALESCE(SUM(cached_tokens),0) AS cached,COALESCE(SUM(reasoning_tokens),0) AS reasoning,COALESCE(SUM(total_tokens),0) AS total,COUNT(*) AS executions,COALESCE(SUM(CASE WHEN total_tokens IS NULL THEN 1 ELSE 0 END),0) AS unreported,${percentage} AS weeklyPercent`;
-  const byDate = new Map(db.prepare(`SELECT date,${sums} FROM token_usage WHERE date BETWEEN ? AND ? GROUP BY date`).all(from,end).map(row => [row.date,row]));
+  const filter = userId === null ? '' : ' AND user_id=?';
+  const params = userId === null ? [from,end] : [from,end,userId];
+  const byDate = new Map(db.prepare(`SELECT date,${sums} FROM token_usage WHERE date BETWEEN ? AND ?${filter} GROUP BY date`).all(...params).map(row => [row.date,row]));
   const daily = [];
   for (let date=from; date<=end; date=dateOffset(date,1)) daily.push(byDate.get(date) || {date,input:0,output:0,cached:0,reasoning:0,total:0,executions:0,unreported:0,weeklyPercent:0});
-  const topUsers = db.prepare(`SELECT users.username,${sums.replaceAll('input_tokens','u.input_tokens').replaceAll('output_tokens','u.output_tokens').replaceAll('cached_tokens','u.cached_tokens').replaceAll('reasoning_tokens','u.reasoning_tokens').replaceAll('total_tokens','u.total_tokens')} FROM token_usage u JOIN users ON users.id=u.user_id WHERE u.date BETWEEN ? AND ? GROUP BY users.id HAVING SUM(u.total_tokens)>0 ORDER BY weeklyPercent DESC,users.username LIMIT 3`).all(from,end);
-  return { startedAt, start:from, end, days, quota: { estimated:true, model: 'mixed', referenceModel: 'gpt-6.1-sol', modelWeight: tokenModelWeight, plan: 'Pro US$200', windowDays:7, capacity:weeklyTokenCapacity, speedMultiplier:tokenSpeedMultiplier }, totals:db.prepare(`SELECT ${sums} FROM token_usage WHERE date BETWEEN ? AND ?`).get(from,end), daily, topUsers };
+  const topUsers = db.prepare(`SELECT users.username,${sums.replaceAll('input_tokens','u.input_tokens').replaceAll('output_tokens','u.output_tokens').replaceAll('cached_tokens','u.cached_tokens').replaceAll('reasoning_tokens','u.reasoning_tokens').replaceAll('total_tokens','u.total_tokens')} FROM token_usage u JOIN users ON users.id=u.user_id WHERE u.date BETWEEN ? AND ? GROUP BY users.id HAVING SUM(u.total_tokens)>0 ORDER BY weeklyPercent DESC,users.username LIMIT 10`).all(from,end);
+  return { startedAt, start:from, end, days, quota: { estimated:true, model: 'mixed', referenceModel: 'gpt-6.1-sol', modelWeight: tokenModelWeight, plan: 'Pro US$200', windowDays:7, capacity:weeklyTokenCapacity, speedMultiplier:tokenSpeedMultiplier }, totals:db.prepare(`SELECT ${sums} FROM token_usage WHERE date BETWEEN ? AND ?${filter}`).get(...params), daily, topUsers };
 }

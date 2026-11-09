@@ -46,7 +46,7 @@ test('statistics are Alexis-only; isolate concurrent usage, deduplicate snapshot
   for(const offset of [0,2]) await Promise.all(users.slice(offset,offset+2).map((user,i)=>{const index=offset+i;return req('/api/chat',{cookie:user.cookie,body:{messages:[{role:'user',content:String((index+1)*1000)}]},hash:String(index+1).repeat(64)});}));
   const stats=(await req('/api/statistics',{cookie:users[0].cookie})).data;
   assert.equal(stats.totals.total,11200);assert.equal(stats.totals.input,10400);assert.equal(stats.totals.output,800);assert.equal(stats.totals.cached,400);assert.equal(stats.totals.reasoning,200);assert.equal(stats.totals.executions,4);
-  assert.deepEqual(stats.topUsers.map(u=>u.username),['another','daniel','aline']);assert.equal(stats.daily.at(-1).date,today());
+  assert.deepEqual(stats.topUsers.map(u=>u.username),['another','daniel','aline','alexis']);assert.equal(stats.daily.at(-1).date,today());
   await req('/api/chat',{cookie:users[0].cookie,body:{messages:[{role:'user',content:'1000'}]},hash:'1'.repeat(64)});
   assert.equal(application.db.prepare('SELECT COUNT(*) n FROM token_usage').get().n,4);
   await req('/api/chat',{cookie:users[0].cookie,body:{messages:[{role:'user',content:'missing'}]}});
@@ -54,6 +54,12 @@ test('statistics are Alexis-only; isolate concurrent usage, deduplicate snapshot
   const earlier=dateOffset(today(),-8);
   application.db.prepare('UPDATE token_usage SET date=? WHERE user_id=?').run(earlier,users[3].id);
   application.db.prepare('UPDATE token_usage_meta SET started_at=?').run(`${earlier}T12:00:00.000Z`);
+  const detail=await req('/api/statistics?days=7&username=aline',{cookie:users[0].cookie});
+  assert.equal(detail.status,200);assert.equal(detail.cache,'no-store');assert.equal(detail.data.selectedUser,'aline');assert.equal(detail.data.totals.total,2300);assert.equal(detail.data.totals.executions,1);assert.equal(detail.data.daily.at(-1).total,2300);assert.equal(detail.data.daily.reduce((n,d)=>n+d.total,0),2300);assert.equal(detail.data.topUsers[0].username,'daniel');
+  assert.equal((await req('/api/statistics?username=unknown',{cookie:users[0].cookie})).status,404);
+  assert.equal((await req('/api/statistics?username=alexis&username=aline',{cookie:users[0].cookie})).status,400);
+  assert.equal((await req('/api/statistics?username=aline',{cookie:users[1].cookie})).status,403);
+  const outside=(await req('/api/statistics?days=7&username=another',{cookie:users[0].cookie})).data;assert.equal(outside.totals.total,0);assert.ok(outside.daily.every(day=>day.total===0));
   const week=(await req('/api/statistics?days=7',{cookie:users[0].cookie})).data;assert.equal(week.totals.total,6900);assert.equal(week.daily.length,7);assert.deepEqual(week.topUsers.map(u=>u.username),['daniel','aline','alexis']);
   await new Promise(r=>server.close(r));application.db.close();await start();
   assert.equal((await req('/api/statistics?days=30',{cookie:users[0].cookie})).data.totals.total,11200);
@@ -83,7 +89,7 @@ test('weekly estimates weight cached input, output and speed; migration preserve
   const stats=tokenStatistics(db,7);
   assert.ok(Math.abs(stats.totals.weeklyPercent-1.45)<1e-10);
   assert.equal(stats.daily.at(-1).weeklyPercent,stats.totals.weeklyPercent);
-  assert.deepEqual(stats.topUsers.map(u=>u.username),['output','alexis','cached']);
+  assert.deepEqual(stats.topUsers.map(u=>u.username),['output','alexis','cached','standard']);
   assert.equal(stats.quota.estimated,true);assert.equal(stats.quota.windowDays,7);
   installTokenUsage(db);assert.equal(db.prepare("SELECT speed FROM token_usage WHERE user_id='d'").get().speed,'standard');
  }finally{db.close();}
@@ -112,5 +118,25 @@ test('mixed model statistics preserve raw tokens and apply model and speed weigh
   assert.equal(weeklyQuotaPercent(usageNormalized,'fast','gpt-6.1-terra'),weeklyQuotaPercent(usageNormalized)*1.25);
   installTokenUsage(db);
   assert.equal(db.prepare("SELECT model FROM token_usage WHERE user_id='terra'").get().model,'gpt-6.1-terra');
+ }finally{db.close();}
+});
+
+test('ranking includes at most ten users; selected daily totals stay separate from the global ranking',async()=>{
+ const {DatabaseSync}=await import('node:sqlite');
+ const {installTokenUsage,tokenStatistics,withTokenTracking}=await import('../server/token-usage.js');
+ const db=new DatabaseSync(':memory:');
+ try{
+  db.exec('CREATE TABLE users(id TEXT PRIMARY KEY,username TEXT)');
+  const store=installTokenUsage(db);
+  for(let n=1;n<=12;n++){
+   const id=`person-${String(n).padStart(2,'0')}`;
+   db.prepare('INSERT INTO users VALUES(?,?)').run(id,id);
+   withTokenTracking(store(id),()=>{const execution=startTokenExecution('food','fast','gpt-6.1-terra');execution.report({input_tokens:n*1000,output_tokens:0});execution.finish('completed');});
+  }
+  const global=tokenStatistics(db,7);
+  assert.equal(global.topUsers.length,10);assert.deepEqual(global.topUsers.map(row=>row.username),Array.from({length:10},(_,i)=>`person-${String(12-i).padStart(2,'0')}`));
+  const detail=tokenStatistics(db,7,'person-05');assert.equal(detail.totals.total,5000);assert.equal(detail.totals.executions,1);
+  assert.equal(detail.daily.reduce((total,day)=>total+day.total,0),5000);assert.ok(Math.abs(detail.totals.weeklyPercent-global.topUsers.find(row=>row.username==='person-05').weeklyPercent)<1e-12);
+  assert.deepEqual(detail.topUsers,global.topUsers);assert.equal(global.totals.total,78000);
  }finally{db.close();}
 });
