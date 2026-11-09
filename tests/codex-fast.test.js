@@ -1,37 +1,50 @@
+import { codexServer } from '../server/codex-server.js';
 import {withTokenTracking} from '../server/token-usage.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { analyzePhoto, analyzeDescription, estimateMissingMacros, analyzeWorkout } from '../server/codex.js';
 
-test('all evaluations request Terra fast and low reasoning even when global config is ignored', async () => {
+test('all evaluations reuse one server with isolated Terra fast threads and low reasoning', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'foodtrack-fast-test-'));
-  const original = process.env.CODEX_BIN;
+  const original = process.env.CODEX_BIN, originalHome = process.env.CODEX_HOME;
   try {
     const cli = join(dir, 'codex');
     await writeFile(cli, `#!/usr/bin/env node
-const fs = require('node:fs');
-const args = process.argv.slice(2);
-const schema = JSON.parse(fs.readFileSync(args[args.indexOf('--output-schema') + 1], 'utf8'));
-const workout = !!schema.properties.options?.items?.properties?.activities;
-for (const value of ['service_tier="fast"', 'features.fast_mode=true', 'model_reasoning_effort="low"', 'project_doc_max_bytes=0', 'agents.enabled=false', 'skills.bundled.enabled=false', 'skills.include_instructions=false', 'web_search="disabled"', 'personality="none"', ...['apps','remote_plugin','multi_agent','multi_agent_v2','code_mode','code_mode_host','goals','memories','skill_search','view_image','image_generation','browser_use','computer_use','hooks','sleep_tool','default_mode_request_user_input','tool_suggest'].map(key=>'features.'+key+'=false')]) {
-  if (!args.some((arg, i) => arg === '-c' && args[i + 1] === value)) process.exit(2);
-}
-if (!args.includes('--ignore-user-config') || !args.includes('--json')) process.exit(3);
-if (args[args.indexOf('--model') + 1] !== 'gpt-6.1-terra') process.exit(6);
-const instructionsArg = args.find(arg => arg.startsWith('model_instructions_file='));
-if (!instructionsArg) process.exit(4);
-const instructions = fs.readFileSync(JSON.parse(instructionsArg.slice('model_instructions_file='.length)), 'utf8');
-if (!instructions.includes('No uses herramientas') || instructions.length > 1000) process.exit(5);
-const result = workout ? {options:[1,2,3].map(i=>({name:'Moderado '+i,details:'Supuesto',activities:[{name:'Caminar',minutes:30,met:4}]}))} : schema.required.includes('description')
-  ? { description: 'Comida', options: [{ name: 'Huevos', portion: 'Dos unidades', calories: 142, protein: 12, fat: 10, carbs: 1, details: 'Estimación' }] }
-  : { options: [{ index: 0, protein: 12, fat: 10, carbs: 1 }] };
-process.stdin.resume();
-process.stdin.on('end', () => {fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], JSON.stringify(result));console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1000,output_tokens:200,cached_input_tokens:800,reasoning_output_tokens:50}}));});
+const fs = require('node:fs'), readline = require('node:readline');
+const config = fs.readFileSync(process.env.CODEX_HOME + '/config.toml', 'utf8');
+for (const value of ['shell_tool = false','apply_patch_freeform = false','project_doc_max_bytes = 0','[agents]','[skills.bundled]','include_instructions = false','code_mode_host = true']) if (!config.includes(value)) process.exit(2);
+fs.appendFileSync(${JSON.stringify(join(dir, 'starts'))}, 'started\\n');
+let seq = 0;
+const threads = new Set(), emit = value => console.log(JSON.stringify(value));
+readline.createInterface({input:process.stdin}).on('line', line => {
+ const msg = JSON.parse(line), p = msg.params;
+ if (!msg.id) return;
+ if (msg.method === 'initialize') emit({id:msg.id,result:{}});
+ if (msg.method === 'thread/start') {
+  if(p.model !== 'gpt-6.1-terra' || p.serviceTier !== 'fast' || p.ephemeral !== true || p.config.web_search !== 'disabled' || p.config.features.fast_mode !== true || p.config.features.code_mode_host !== false || !p.baseInstructions.includes('No uses herramientas') || p.baseInstructions.length > 1000) process.exit(3);
+  const id = 'thread-' + (++seq); threads.add(id); emit({id:msg.id,result:{thread:{id}}});
+ }
+ if (msg.method === 'turn/start') {
+  if(p.effort !== 'low' || p.serviceTier !== 'fast' || !threads.has(p.threadId) || p.model !== 'gpt-6.1-terra') process.exit(4);
+  const schema = p.outputSchema, workout = !!schema.properties.options?.items?.properties?.activities;
+  const result = workout ? {options:[1,2,3].map(i=>({name:'Moderado '+i,details:'Supuesto',activities:[{name:'Caminar',minutes:30,met:4}]}))} : schema.required.includes('description')
+   ? { description: 'Comida', options: [{ name: 'Huevos', portion: 'Dos unidades', calories: 142, protein: 12, fat: 10, carbs: 1, details: 'Estimación' }] }
+   : { options: [{ index: 0, protein: 12, fat: 10, carbs: 1 }] };
+  emit({id:msg.id,result:{turn:{id:'turn-'+seq}}});
+  emit({method:'item/completed',params:{threadId:p.threadId,item:{id:'answer',type:'agentMessage',text:JSON.stringify(result)}}});
+  emit({method:'thread/tokenUsage/updated',params:{threadId:p.threadId,tokenUsage:{total:{inputTokens:1000,outputTokens:200,cachedInputTokens:800,reasoningOutputTokens:50}}}});
+  emit({method:'turn/completed',params:{threadId:p.threadId,turn:{status:'completed'}}});
+ }
+ if (msg.method === 'thread/unsubscribe') {threads.delete(p.threadId); emit({id:msg.id,result:{status:'unsubscribed'}});}
+});
 `, { mode: 0o700 });
+    await writeFile(join(dir, 'auth.json'), '{}');
+    process.env.CODEX_HOME = dir;
     process.env.CODEX_BIN = cli;
+    await codexServer.start();
     const records=[];
     await withTokenTracking({record:r=>records.push(structuredClone(r))},async()=>{
     assert.equal((await analyzePhoto(join(dir, 'photo.jpg'))).options[0].calories, 142);
@@ -47,7 +60,10 @@ process.stdin.on('end', () => {fs.writeFileSync(args[args.indexOf('--output-last
     assert.equal(final.filter(r=>r.source==='photo').length,3);
     assert.equal(final.filter(r=>r.source==='food').length,2);
     assert.ok(final.every(r=>r.speed==='fast' && r.model==='gpt-6.1-terra'));
+    assert.equal((await readFile(join(dir, 'starts'), 'utf8')).trim(), 'started');
   } finally {
+    await codexServer.stop();
+    if (originalHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = originalHome;
     if (original === undefined) delete process.env.CODEX_BIN; else process.env.CODEX_BIN = original;
     await rm(dir, { recursive: true, force: true });
   }

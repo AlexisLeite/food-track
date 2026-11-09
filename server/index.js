@@ -1,7 +1,9 @@
+import { codexServer } from './codex-server.js';
 import { createApplication } from './app.js';
 import { startAudioArchiveWorker } from './audio-archive.js';
 import { resolve } from 'node:path';
 const { app, db, photoStorage, extractionQueue } = await createApplication();
+codexServer.start().catch(() => {}); // Background retries keep the app available during Codex outages.
 const stopAudioArchive = startAudioArchiveWorker(resolve(process.env.DATA_DIR || 'data'));
 const stopPhotos = photoStorage.start();
 const port = Number(process.env.PORT || 3086);
@@ -10,5 +12,5 @@ const server = app.listen(port, host, () => console.log(`Foodtrack: http://${hos
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {
   stopAudioArchive();
   stopPhotos();
-  server.close(async () => { await extractionQueue.stop(); await db.close(); process.exit(0); });
+  server.close(async () => { await extractionQueue.stop(); await codexServer.stop(); await db.close(); process.exit(0); });
 });

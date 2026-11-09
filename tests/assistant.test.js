@@ -1,3 +1,4 @@
+import { codexServer } from '../server/codex-server.js';
 import { withTokenTracking } from '../server/token-usage.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -174,29 +175,29 @@ const fs=require('node:fs'),readline=require('node:readline'),args=process.argv.
 if(args[0]!=='app-server')process.exit(2);
 const config=fs.readFileSync(process.env.CODEX_HOME+'/config.toml','utf8');
 for(const value of ['web_search = "live"','shell_tool = false','unified_exec = false','service_tier = "default"','fast_mode = false','code_mode_host = true','[agents]','[skills.bundled]','include_instructions = false'])if(!config.includes(value))process.exit(3);
-const path=JSON.parse(config.match(/^model_instructions_file = (.+)$/m)[1]);
-const instructions=fs.readFileSync(path,'utf8');
-if(instructions.length>1500||!instructions.includes('al menos 3 opciones')||!instructions.includes('búsqueda web'))process.exit(6);
 const emit=value=>console.log(JSON.stringify(value));
 readline.createInterface({input:process.stdin}).on('line',line=>{
  const msg=JSON.parse(line);
  if(!msg.id)return;
+ if(msg.method==='thread/unsubscribe')emit({id:msg.id,result:{status:'unsubscribed'}});
  if(msg.method==='initialize')emit({id:msg.id,result:{}});
  if(msg.method==='thread/start'){
-  if(msg.params.model!=='gpt-6-luna'||msg.params.ephemeral!==true)process.exit(4);
+  if(msg.params.model!=='gpt-6-luna'||msg.params.ephemeral!==true||msg.params.serviceTier!=='default'||msg.params.config.web_search!=='live'||msg.params.config.features.fast_mode!==false||msg.params.config.features.code_mode_host!==true)process.exit(4);
+  const instructions=msg.params.baseInstructions;
+  if(instructions.length>1500||!instructions.includes('al menos 3 opciones')||!instructions.includes('búsqueda web'))process.exit(6);
   emit({id:msg.id,result:{thread:{id:'thread-test'}}});
  }
  if(msg.method==='turn/start'){
   if(msg.params.effort!=='low'||msg.params.model!=='gpt-6-luna')process.exit(5);
   emit({id:msg.id,result:{turn:{id:'turn-test'}}});
-  emit({method:'item/started',params:{item:{type:'webSearch'}}});
-  emit({method:'item/agentMessage/delta',params:{itemId:'answer',delta:'Respuesta '}});
+  emit({method:'item/started',params:{threadId:'thread-test',item:{type:'webSearch'}}});
+  emit({method:'item/agentMessage/delta',params:{threadId:'thread-test',itemId:'answer',delta:'Respuesta '}});
   setTimeout(()=>{
-   emit({method:'item/agentMessage/delta',params:{itemId:'answer',delta:'con fuente'}});
-   emit({method:'item/completed',params:{item:{id:'answer',type:'agentMessage',text:'Respuesta con fuente'}}});
-   emit({method:'thread/tokenUsage/updated',params:{tokenUsage:{total:{inputTokens:1000,outputTokens:200,cachedInputTokens:600,reasoningOutputTokens:50}}}});
-   emit({method:'thread/tokenUsage/updated',params:{tokenUsage:{total:{inputTokens:1000,outputTokens:200,cachedInputTokens:600,reasoningOutputTokens:50}}}});
-   emit({method:'turn/completed',params:{turn:{status:'completed'}}});
+   emit({method:'item/agentMessage/delta',params:{threadId:'thread-test',itemId:'answer',delta:'con fuente'}});
+   emit({method:'item/completed',params:{threadId:'thread-test',item:{id:'answer',type:'agentMessage',text:'Respuesta con fuente'}}});
+   emit({method:'thread/tokenUsage/updated',params:{threadId:'thread-test',tokenUsage:{total:{inputTokens:1000,outputTokens:200,cachedInputTokens:600,reasoningOutputTokens:50}}}});
+   emit({method:'thread/tokenUsage/updated',params:{threadId:'thread-test',tokenUsage:{total:{inputTokens:1000,outputTokens:200,cachedInputTokens:600,reasoningOutputTokens:50}}}});
+   emit({method:'turn/completed',params:{threadId:'thread-test',turn:{status:'completed'}}});
   },50);
  }
 });
@@ -205,6 +206,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
     });
     process.env.CODEX_BIN = cli;
     process.env.CODEX_HOME = dir;
+    await codexServer.start();
     let searched = false;
     const updates = [];
     const records = [];
@@ -225,6 +227,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
     assert.equal(searched, true);
     assert.deepEqual(updates, ['Respuesta ', 'Respuesta con fuente', 'Respuesta con fuente']);
   } finally {
+    await codexServer.stop();
     if (original === undefined) delete process.env.CODEX_BIN;else process.env.CODEX_BIN = original;
     if (originalHome === undefined) delete process.env.CODEX_HOME;else process.env.CODEX_HOME = originalHome;
     await rm(dir, {

@@ -1,25 +1,11 @@
-import { createInterface } from 'node:readline';
 import { startTokenExecution } from './token-usage.js';
 import { executionLogger } from './execution-log.js';
 import { hasMacros } from '../public/nutrition.js';
-import { spawn } from 'node:child_process';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readFile } from 'node:fs/promises';
+import { codexServer } from './codex-server.js';
 
-const extractionInstructions = fileURLToPath(new URL('./extraction-instructions.txt', import.meta.url));
+const extractionInstructions = new URL('./extraction-instructions.txt', import.meta.url);
 const extractionModel = 'gpt-6.1-terra';
-// Extraction needs only the supplied text/image and JSON schema, without agent tools.
-const extractionConfig = [
-  'agents.enabled=false', 'skills.bundled.enabled=false', 'skills.include_instructions=false',
-  'web_search="disabled"', 'personality="none"',
-  ...['apps', 'remote_plugin', 'multi_agent', 'multi_agent_v2', 'code_mode', 'code_mode_host',
-    'goals', 'memories', 'skill_search', 'view_image', 'image_generation', 'browser_use',
-    'computer_use', 'hooks', 'sleep_tool', 'default_mode_request_user_input', 'tool_suggest']
-    .map(feature => `features.${feature}=false`)
-];
-
 const schema = {
   type: 'object', additionalProperties: false, required: ['description', 'options'], properties: {
     description: { type: 'string' }, options: { type: 'array', items: {
@@ -42,47 +28,20 @@ async function runCodexImage(imagePath, prompt, schema, source = imagePath ? 'ph
   active++; log('started');
   const tokens = startTokenExecution(source, 'fast', extractionModel);
   let tokenStatus = 'failed';
-  let dir;
   try {
-    dir = await mkdtemp(join(tmpdir(), 'foodtrack-codex-'));
-    const schemaPath = join(dir, 'schema.json');
-    const outputPath = join(dir, 'answer.json');
-    await writeFile(schemaPath, JSON.stringify(schema));
-
-    await new Promise((resolve, reject) => {
-      const args = ['exec', '--model', extractionModel, '--json', '--ignore-user-config', '--ignore-rules', '--ephemeral', '--skip-git-repo-check', '-s', 'read-only', '-c', 'approval_policy="never"', '-c', 'model_reasoning_effort="low"', '-c', 'service_tier="fast"', '-c', 'features.fast_mode=true', '-c', 'features.shell_tool=false', '-c', 'features.apply_patch_freeform=false', '--output-schema', schemaPath, '--output-last-message', outputPath, '--image', imagePath, '-'];
-      args.push('-c', `model_instructions_file=${JSON.stringify(extractionInstructions)}`, '-c', 'project_doc_max_bytes=0');
-      args.push(...extractionConfig.flatMap(value => ['-c', value]));
-      if (!imagePath) args.splice(args.indexOf('--image'), 2);
-      const child = spawn(process.env.CODEX_BIN || '/usr/local/bin/codex', args, { cwd: dir, env: { PATH: process.env.PATH, HOME: process.env.HOME, ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}) }, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
-      const lines = createInterface({ input: child.stdout });
-      lines.on('line', line => {
-        let event; try { event = JSON.parse(line); } catch { return; }
-        if (event.type === 'turn.completed') tokens.report(event.usage, true);
-      });
-      child.once('close', () => lines.close());
-      let timedOut = false;
-      const timer = setTimeout(() => { timedOut = true; try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, 180000);
-      // Never forward CLI diagnostics: they may contain account information.
-      let diagnosticBytes = 0;
-      child.stderr.on('data', chunk => { diagnosticBytes += chunk.length; });
-      child.once('spawn', () => log('spawned', { pid: child.pid }));
-      child.on('error', () => { log('spawn_failed'); clearTimeout(timer); reject(Object.assign(new Error('No se pudo iniciar Codex en el servidor.'), { code: 'CODEX_START_FAILED' })); });
-      child.on('close', (code, signal) => { log('process_exit', { exitCode: code, signal, timedOut, diagnosticBytes }); clearTimeout(timer); code === 0 ? resolve() : reject(Object.assign(new Error(timedOut ? 'El análisis tardó demasiado. Volvé a intentarlo.' : 'Codex no pudo analizar la foto. Comprobá la sesión de Codex del servidor y volvé a intentar.'), { code: timedOut ? 'CODEX_TIMEOUT' : 'CODEX_EXIT_FAILED' })); });
-      child.stdin.on('error', () => {});
-      child.stdin.end(prompt);
+    const text = await codexServer.run({
+      model: extractionModel, fast: true, instructions: await readFile(extractionInstructions, 'utf8'),
+      prompt, imagePath, outputSchema: schema, onUsage: usage => tokens.report(usage), log
     });
-    const result = JSON.parse(await readFile(outputPath, 'utf8'));
+    const result = JSON.parse(text);
     tokenStatus = 'completed';
     log('completed', { optionCount: result.options?.length ?? 0 });
     return result;
   } catch (error) {
-    log('failed', { reason: error instanceof SyntaxError ? 'invalid_json' : ['CODEX_START_FAILED', 'CODEX_TIMEOUT', 'CODEX_EXIT_FAILED'].includes(error.code) ? error.code : 'execution_error' });
+    log('failed', { reason: error instanceof SyntaxError ? 'invalid_json' : error.code || 'execution_error' });
     throw error;
   } finally {
-    await tokens.finish(tokenStatus);
-    active--;
-    if (dir) await rm(dir, { recursive: true, force: true });
+    try { await tokens.finish(tokenStatus); } finally { active--; }
   }
 }
 
