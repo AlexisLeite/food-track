@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { migrateProfileVersions, appendProfileVersion } from '../server/profile-versions.js';
 import { buildHistory, buildWeek, dateOffset, weekRange } from '../server/history.js';
-import { createApplication } from '../server/app.js';
+import { createApplication } from './helpers/application.js';
 import { calculateProfile, today } from '../server/nutrition.js';
 
 const original = { weight:80,targetWeight:75,dailyCalories:2000,expenditure:2500 };

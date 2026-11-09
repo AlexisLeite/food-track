@@ -1,6 +1,7 @@
 [Unit]
 Description=Comida - diario de calorias
-After=network-online.target
+After=network-online.target postgresql@18-main.service
+Requires=postgresql@18-main.service
 Wants=network-online.target
 
 [Service]

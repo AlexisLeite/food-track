@@ -107,7 +107,7 @@ ${disabled.map(key=>`${key} = false`).join('\n')}
       log('completed',{characters:finalText.length,webSearches});return finalText;
     } finally { signal?.removeEventListener('abort',abort);lines.close(); }
   } finally {
-    tokens.finish(signal?.aborted && tokenStatus !== 'completed' ? 'interrupted' : tokenStatus);
+    await tokens.finish(signal?.aborted && tokenStatus !== 'completed' ? 'interrupted' : tokenStatus);
     clearTimeout(timer);
     const exited=child && child.exitCode===null && child.signalCode===null
       ? new Promise(resolve=>child.once('close',resolve)) : Promise.resolve();

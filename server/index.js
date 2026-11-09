@@ -10,5 +10,5 @@ const server = app.listen(port, host, () => console.log(`Foodtrack: http://${hos
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {
   stopAudioArchive();
   stopPhotos();
-  server.close(async () => { await extractionQueue.stop(); db.close(); process.exit(0); });
+  server.close(async () => { await extractionQueue.stop(); await db.close(); process.exit(0); });
 });

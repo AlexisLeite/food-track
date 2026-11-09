@@ -1,0 +1,188 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model users {
+  id                           String                @id
+  username                     String                @unique
+  password                     String
+  profile                      String?
+  enable_codex_extraction      Int                   @default(0)
+  theme                        String                @default("dark")
+  sessions_relation            sessions[]
+  meals_relation               meals[]
+  profile_goals_relation       profile_goals[]
+  submission_receipts_relation submission_receipts[]
+  profile_versions_relation    profile_versions[]
+  workouts_relation            workouts[]
+  token_usage_relation         token_usage[]
+  usage_reservations_relation  usage_reservations[]
+  extraction_jobs_relation     extraction_jobs[]
+}
+
+model sessions {
+  token          String @id
+  user_id        String
+  expires        BigInt
+  users_relation users  @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([expires])
+}
+
+model meals {
+  id                         String             @id
+  user_id                    String
+  date                       String
+  photo                      String
+  selected                   String?
+  created_at                 String
+  users_relation             users              @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  analyses_relation          analyses[]
+  meal_descriptions_relation meal_descriptions?
+
+  @@index([user_id, date])
+}
+
+model analyses {
+  id             String @id
+  meal_id        String
+  instructions   String
+  description    String
+  options        String
+  created_at     String
+  ordinal        BigInt @unique @default(autoincrement())
+  meals_relation meals  @relation(fields: [meal_id], references: [id], onDelete: Cascade)
+
+  @@index([meal_id, created_at])
+}
+
+model meal_descriptions {
+  meal_id        String @id
+  description    String
+  meals_relation meals  @relation(fields: [meal_id], references: [id], onDelete: Cascade)
+}
+
+model profile_goals {
+  user_id        String
+  date           String
+  profile        String
+  users_relation users  @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@id([user_id, date])
+}
+
+model submission_receipts {
+  user_id        String
+  submission_id  String
+  path           String
+  fingerprint    String
+  status         Int
+  response       String
+  users_relation users  @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@id([user_id, submission_id])
+}
+
+model profile_versions {
+  id             Int    @id @default(autoincrement())
+  user_id        String
+  date           String
+  profile        String
+  created_at     String
+  users_relation users  @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, date, id])
+}
+
+model workouts {
+  id                              String                   @id
+  user_id                         String
+  date                            String
+  description                     String
+  estimate                        String
+  confirmed                       Int                      @default(0)
+  created_at                      String
+  users_relation                  users                    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  workout_clarifications_relation workout_clarifications[]
+
+  @@index([user_id, date])
+}
+
+model token_usage {
+  id               String @id
+  user_id          String
+  date             String
+  source           String
+  status           String
+  input_tokens     Int?
+  output_tokens    Int?
+  cached_tokens    Int?
+  reasoning_tokens Int?
+  total_tokens     Int?
+  created_at       String
+  speed            String @default("standard")
+  model            String @default("gpt-6.1-sol")
+  users_relation   users  @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([date, user_id])
+}
+
+model token_usage_meta {
+  id         Int    @id
+  started_at String
+}
+
+model usage_reservations {
+  user_id        String
+  kind           String
+  period         String
+  request_key    String
+  created_at     String
+  users_relation users  @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@id([user_id, kind, request_key])
+  @@index([user_id, kind, period])
+}
+
+model usage_limits_meta {
+  id Int @id
+}
+
+model extraction_jobs {
+  id             String  @id
+  user_id        String
+  kind           String
+  resource_id    String
+  payload        String
+  request_key    String
+  fingerprint    String
+  state          String
+  attempts       Int     @default(0)
+  next_at        BigInt  @default(0)
+  result         String?
+  error          String?
+  created_at     String
+  ordinal        BigInt  @unique @default(autoincrement())
+  users_relation users   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, request_key])
+  @@index([state, next_at])
+  @@index([resource_id])
+}
+
+model workout_clarifications {
+  id                String   @id
+  workout_id        String
+  instructions      String
+  estimate          String
+  created_at        String
+  ordinal           BigInt   @unique @default(autoincrement())
+  workouts_relation workouts @relation(fields: [workout_id], references: [id], onDelete: Cascade)
+
+  @@index([workout_id, created_at])
+}

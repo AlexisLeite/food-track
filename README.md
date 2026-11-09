@@ -6,7 +6,7 @@ El contador diario muestra debajo el acumulado de la semana de domingo a sábado
 
 ## Ejecutar
 
-Requiere Node.js 22.13 o posterior, Python con venv y Codex CLI con una sesión iniciada (`codex login status`).
+Requiere PostgreSQL y Node.js 22.13 o posterior, Python con venv y Codex CLI con una sesión iniciada (`codex login status`).
 
 ```sh
 npm ci
@@ -16,6 +16,8 @@ cp .env.example .env
 set -a
 . ./.env
 set +a
+npm run db:generate
+npm run db:migrate
 npm start
 ```
 
@@ -32,7 +34,8 @@ El servidor escucha en `127.0.0.1:3086`. Configurar `APP_ORIGIN` con el origen e
 - URL: https://comida.gim.uy
 - Servicio: `foodtrack.service`, instalado desde `deploy/foodtrack.service`.
 - Checkout: `/repos/foodtrack`.
-- Datos: `/repos/foodtrack/data/foodtrack.sqlite` y `/repos/foodtrack/data/photos/`.
+- Base: PostgreSQL `foodtrack`, instancia `18/main`, puerto 5432; acceso mediante Prisma 7.
+- Fotos y audios: `/mnt/scraper-db/food-track/`; `DATA_DIR` conserva respaldos y colas locales de archivos.
 - Cloudflare Tunnel: ingress de `comida.gim.uy` a `http://127.0.0.1:3086` en `/etc/cloudflared/config.yml`.
 - DNS: CNAME hacia el túnel existente. Los ingress anteriores se conservan.
 
@@ -45,7 +48,7 @@ systemctl status foodtrack --no-pager
 
 Las pruebas usan una base temporal y un analizador inyectado; comprueban aislamiento de usuarios, sesiones, CSRF, selección de opciones, totales, reevaluaciones, recuperación de fallos y borrado. El análisis real de Codex y la transcripción local también se verificaron durante la instalación.
 
-Para respaldar, detener brevemente `foodtrack`, copiar todo `data/` (incluidos SQLite, WAL y SHM si existen) y volver a iniciarlo. No subir datos, `.env`, credenciales de Codex ni el entorno Python a Git. La transcripción borra sus archivos temporales tanto al finalizar como al fallar. El navegador libera el micrófono y los fragmentos de audio al parar, cancelar o cerrar, y descarta el archivo una vez enviada la transcripción. Las fotos se guardan hasta que el usuario elimina la comida.
+Para respaldar la base sin detener el servicio: `npm run db:backup`. Genera y verifica un dump PostgreSQL en formato custom y con permisos 0600. Respaldar también las fotos y audios del disco secundario. No subir datos, `.env`, credenciales de Codex ni el entorno Python a Git. La transcripción borra sus archivos temporales tanto al finalizar como al fallar. El navegador libera el micrófono y los fragmentos de audio al parar, cancelar o cerrar, y descarta el archivo una vez enviada la transcripción. Las fotos se guardan hasta que el usuario elimina la comida.
 
 ## Cambiar la contraseña de alexis
 
@@ -56,12 +59,11 @@ sudo /repos/foodtrack/scripts/cambiar-password-alexis.sh
 ```
 
 Pide y confirma la nueva contraseña sin mostrarla (12 a 128 caracteres),
-crea y verifica un respaldo SQLite consistente junto a la base, actualiza
+crea y verifica un respaldo PostgreSQL consistente en `data/backups`, actualiza
 el hash scrypt de alexis y revoca sus sesiones en una transacción.
 Conserva sus comidas, fotos, historial y perfil. No requiere reiniciar el servicio.
-Lee `DATA_DIR` de `.env` del checkout; `FOODTRACK_DB` permite usar una base
-de prueba existente. La contraseña no se pasa como argumento ni se guarda
-en el historial del shell. Las copias `foodtrack.sqlite.before-password-*.sqlite`
+Lee `DATABASE_URL` y `DATA_DIR` de `.env` del checkout; `FOODTRACK_DB` se reserva para recuperación explícita de copias SQLite antiguas. La contraseña no se pasa como argumento ni se guarda
+en el historial del shell. Las copias `before-password-*.dump`
 contienen datos privados y se crean con permisos 0600.
 
 ## Navegación e historia
@@ -96,7 +98,7 @@ Las metas en gramos se calculan con 4 kcal/g de proteínas y carbohidratos y 9 k
 
 Los perfiles existentes reciben las metas al leerlos sin cambiar sus calorías, pesos ni plazos guardados. Las opciones antiguas sin macros se conservan, se señalan como incompletas y requieren reevaluación y confirmación para completarlas. Si un día contiene alguna comida sin macros, sus calorías siguen contando y el resumen de macros se marca como incompleto.
 
-Para completar datos históricos por pedido del usuario: `node scripts/backfill-macros.js`. El script crea antes un respaldo SQLite consistente en `data/backups/`, solicita a Codex solo los macros de las opciones ya guardadas y conserva porciones, calorías y selecciones. Compara los registros dentro de una transacción para evitar sobrescribir ediciones concurrentes. No se ejecuta automáticamente al iniciar el servidor.
+Para completar datos históricos por pedido del usuario: `node scripts/backfill-macros.js`. El script crea antes un respaldo PostgreSQL consistente en `data/backups/`, solicita a Codex solo los macros de las opciones ya guardadas y conserva porciones, calorías y selecciones. Compara los registros dentro de una transacción para evitar sobrescribir ediciones concurrentes. No se ejecuta automáticamente al iniciar el servidor.
 
 Las opciones de una foto representan alternativas para el plato completo: solo la seleccionada suma calorías. Reevaluar conserva todas las alternativas previas y no cambia la selección hasta confirmarla. Las cantidades y calorías de una imagen son estimaciones.
 
@@ -137,7 +139,7 @@ Los registros JSON se consultan con `journalctl -u foodtrack.service -f -o cat`.
 
 Por pedido del usuario, todos los audios de todas las cuentas se conservan en `/mnt/scraper-db/food-track/audio`, en el disco secundario. Cada archivo tiene metadatos JSON con usuario, fecha, formato, identificador de petición, transcripción y resultado (o código de error si falla). La configuración persistente está en `data/audio-debug/persistent.json`, con `userId: "*"`, `mountPoint: "/mnt/scraper-db"` y `mountUuid: "301f3153-374a-4a01-99ba-7d9979e3bf01"`. Primero se guardan los bytes y el resultado en `data/audio-debug/pending`; un worker revisa la cola al iniciar y cada 30 segundos y la transfiere al externo después de finalizar la transcripción. Si falta el disco o falla la transferencia, conserva la copia local y reintenta. Los audios de procesos interrumpidos también se recuperan al iniciar. El directorio tiene permisos 0700 y los archivos 0600; no se sirven públicamente ni se incluyen en Git.
 
-La base SQLite, sus respaldos, las cuentas y el historial **permanecen en `DATA_DIR` del disco interno**. Las fotos se guardan directamente en `/mnt/scraper-db/food-track/photos` cuando el disco está disponible. Si falta o falla una escritura, las fotos nuevas quedan temporalmente en `data/photos`; al volver el disco se copian, sincronizan y retiran de la cola local. Las fotos anteriores no se replican localmente: pueden devolver 404 mientras el USB está ausente, sin impedir consultar el historial ni registrar comidas nuevas. Se puede repetir una comida de foto sin la imagen si esta no está disponible. Las eliminaciones pendientes también se aplican al recuperar el disco. Los lectores de imágenes en curso no pierden su archivo durante una transferencia.
+La base PostgreSQL, las cuentas y el historial permanecen en la instancia `18/main` del disco interno (`/var/lib/postgresql/18/main`); los respaldos de Foodtrack se guardan en `DATA_DIR/backups`. Las fotos se guardan directamente en `/mnt/scraper-db/food-track/photos` cuando el disco está disponible. Si falta o falla una escritura, las fotos nuevas quedan temporalmente en `data/photos`; al volver el disco se copian, sincronizan y retiran de la cola local. Las fotos anteriores no se replican localmente: pueden devolver 404 mientras el USB está ausente, sin impedir consultar el historial ni registrar comidas nuevas. Se puede repetir una comida de foto sin la imagen si esta no está disponible. Las eliminaciones pendientes también se aplican al recuperar el disco. Los lectores de imágenes en curso no pierden su archivo durante una transferencia.
 
 Foodtrack arranca sin el externo y no tiene dependencias systemd del montaje. La identidad del filesystem se comprueba por UUID y número de dispositivo antes de crear directorios. Las operaciones externas usan descriptores abiertos del volumen validado, para evitar escribir en el directorio vacío del disco interno si desaparece el montaje. `deploy/install-service.sh` instala la unidad, configura la protección del archivo de audio y respalda/retira los dos drop-ins antiguos que bloqueaban el arranque. La ubicación externa de fotos se configura con `FOODTRACK_PHOTOS_DIR`, `FOODTRACK_MEDIA_MOUNT` y `FOODTRACK_MEDIA_UUID`; los scripts de mantenimiento deben cargar las mismas variables del servicio.
 
@@ -198,7 +200,7 @@ El chat reemplaza las instrucciones generales de Codex por `server/chat-instruct
 
 ### Cola y presupuestos de IA
 
-Las comidas, aclaraciones y entrenamientos comparten una cola SQLite durable (`extraction_jobs`), con tres extracciones simultáneas. Cada trabajo admite tres intentos automáticos en total ante errores transitorios (esperas de 1 y 3 segundos). No se reintentan validaciones ni permisos denegados. Un reenvío explícito con el mismo hash recupera el resultado o vuelve a intentar un fallo transitorio sin duplicar el registro ni la reserva de presupuesto. Se revisa el permiso también al ejecutar y entregar el resultado; solo el dueño puede consultar el trabajo. Los trabajos pendientes y los que estaban ejecutándose se recuperan al reiniciar. Los identificadores de análisis/entrenamiento coinciden con el trabajo para recuperar también una interrupción entre guardar el registro y completar el trabajo.
+Las comidas, aclaraciones y entrenamientos comparten una cola PostgreSQL durable (`extraction_jobs`), con tres extracciones simultáneas. Cada trabajo admite tres intentos automáticos en total ante errores transitorios (esperas de 1 y 3 segundos). No se reintentan validaciones ni permisos denegados. Un reenvío explícito con el mismo hash recupera el resultado o vuelve a intentar un fallo transitorio sin duplicar el registro ni la reserva de presupuesto. Se revisa el permiso también al ejecutar y entregar el resultado; solo el dueño puede consultar el trabajo. Los trabajos pendientes y los que estaban ejecutándose se recuperan al reiniciar. Los identificadores de análisis/entrenamiento coinciden con el trabajo para recuperar también una interrupción entre guardar el registro y completar el trabajo.
 
 El navegador solicita `Prefer: respond-async`, recibe HTTP 202 y consulta el trabajo con peticiones cortas: la espera en cola no mantiene una petición de análisis abierta frente a Cloudflare. Los clientes anteriores conservan la respuesta síncrona. Audio, fotos y texto mantienen la bandeja IndexedDB y sus hashes.
 
@@ -209,3 +211,39 @@ El chat usa una cola separada de tres consultas simultáneas y cinco mensajes di
 Configuración muestra los presupuestos restantes y totales de comidas, entrenamientos, aclaraciones y chat, junto con la fecha y hora de renovación en Uruguay. La lectura autenticada `/api/usage` consulta solamente las reservas del usuario de la sesión; no admite elegir otra cuenta. Se actualiza al entrar, al volver a la pestaña y cada minuto mientras la sección está visible, sin reemplazar el formulario ni perder sus cambios.
 
 En Estadísticas (solo Alexis), el ranking muestra hasta diez usuarios según el consumo estimado del período. Cada fila permite consultar el total y el desglose diario de esa persona, conservando el ranking global y el período seleccionado; «Ver todos los usuarios» vuelve al agregado. El filtro por usuario se valida y autoriza en el servidor.
+
+## Migración de SQLite a PostgreSQL con Prisma
+
+`DATABASE_URL` es obligatoria: producción no vuelve a SQLite si falla PostgreSQL.
+El esquema y sus relaciones están en `prisma/schema.prisma`; aplicar cambios con
+`npm run db:migrate`. Prisma administra el pool y las transacciones. Las consultas
+SQL existentes siguen parametrizadas mediante Prisma; no se interpolan datos de usuarios.
+Los documentos JSON y fechas históricas conservan sus representaciones originales.
+
+Crear una base vacía y un rol dedicado en la instancia existente. Instalar dependencias,
+generar el cliente y aplicar las migraciones antes de importar. Para el cambio definitivo,
+detener brevemente el servicio, crear un snapshot SQLite consistente e importar ese snapshot:
+
+```sh
+node --env-file=.env scripts/migrate-sqlite-to-postgres.mjs data/backups/pre-postgresql.sqlite
+node --env-file=.env scripts/migrate-sqlite-to-postgres.mjs data/backups/pre-postgresql.sqlite --verify-only
+```
+
+El importador usa una transacción y rechaza destinos con datos; verifica integridad,
+claves foráneas, cantidades, SHA-256 de todos los valores, orden de análisis y la vista
+histórica `profile_timeline`. Reajusta las secuencias después de preservar los IDs.
+No modifica ni elimina el SQLite original ni archivos de fotos y audios.
+El archivo `.postgresql-verification.json` junto al snapshot conserva la evidencia.
+Una vuelta a SQLite después de recibir escrituras nuevas requiere reconciliar esos datos;
+no basta con cambiar la conexión.
+
+`npm test` conserva pruebas de migraciones SQLite antiguas con fixtures explícitos.
+Para pruebas reales de PostgreSQL, usar una base separada cuyo nombre termine en `_test`:
+
+```sh
+TEST_DATABASE_URL=postgresql://usuario:clave@127.0.0.1:5432/foodtrack_test npm run test:postgres
+```
+
+Estas pruebas crean y retiran esquemas aislados; cubren importación, rollback,
+sesiones, cuotas concurrentes, cola de tres trabajos, reintentos, idempotencia,
+entrenamientos, chat, estadísticas y persistencia tras reiniciar la aplicación.

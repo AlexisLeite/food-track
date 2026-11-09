@@ -80,7 +80,7 @@ async function runCodexImage(imagePath, prompt, schema, source = imagePath ? 'ph
     log('failed', { reason: error instanceof SyntaxError ? 'invalid_json' : ['CODEX_START_FAILED', 'CODEX_TIMEOUT', 'CODEX_EXIT_FAILED'].includes(error.code) ? error.code : 'execution_error' });
     throw error;
   } finally {
-    tokens.finish(tokenStatus);
+    await tokens.finish(tokenStatus);
     active--;
     if (dir) await rm(dir, { recursive: true, force: true });
   }
