@@ -140,7 +140,7 @@ test('account isolation, persistent options, totals, retry and session revocatio
     const alice = await request('/api/register', {
       method: 'POST',
       body: {
-        username: 'alice',
+        username: '  ALIce  ',
         password: 'passphrase-alice'
       }
     });
@@ -150,6 +150,19 @@ test('account isolation, persistent options, totals, retry and session revocatio
     assert.equal((await request('/api/me', {
       cookie: a
     })).body.user.username, 'alice');
+    const paddedLogin = await request('/api/login', {
+      method: 'POST', body: { username: ' \tAlIcE\n ', password: 'passphrase-alice' }
+    });
+    assert.equal(paddedLogin.status, 200);
+    assert.equal(paddedLogin.body.user.username, 'alice');
+    for (const username of ['   ', 'al ice']) {
+      assert.equal((await request('/api/login', {
+        method: 'POST', body: { username, password: 'passphrase-alice' }
+      })).status, 400);
+    }
+    assert.equal((await request('/api/login', {
+      method: 'POST', body: { username: 'alice', password: ' passphrase-alice ' }
+    })).status, 401);
     const bob = await request('/api/register', {
       method: 'POST',
       body: {

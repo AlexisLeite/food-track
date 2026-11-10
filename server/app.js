@@ -137,9 +137,10 @@ export async function createApplication({
   });
   const credentials = req => {
     const {
-      username,
+      username: rawUsername,
       password
     } = req.body || {};
+    const username = typeof rawUsername === 'string' ? rawUsername.trim() : rawUsername;
     if (typeof username !== 'string' || !/^[a-zA-Z0-9_.-]{3,32}$/.test(username) || typeof password !== 'string' || password.length < (req.path === '/api/register' ? 10 : 1) || password.length > 128) throw fail(400, 'Usá un usuario de 3 a 32 letras, números, puntos o guiones y una contraseña de 10 a 128 caracteres.');
     return {
       username: username.toLowerCase(),

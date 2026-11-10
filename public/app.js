@@ -294,6 +294,10 @@ function renderAssistant() {
 function renderAuth() {
   root.innerHTML = `<section class="auth"><h1>Comida</h1><form id="auth-form" class="stack"><h2>${authMode === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}</h2><div><label for="username">Usuario</label><input id="username" name="username" autocomplete="username" required minlength="3" maxlength="32" pattern="[a-zA-Z0-9_.-]+" autocapitalize="none" spellcheck="false"></div><div><label for="password">Contraseña</label><input id="password" name="password" type="password" autocomplete="${authMode === 'login' ? 'current-password' : 'new-password'}" required minlength="${authMode === 'register' ? 10 : 1}" maxlength="128">${authMode === 'register' ? '<small>Al menos 10 caracteres.</small>' : ''}</div><p class="error" id="auth-error" role="alert" hidden></p><button class="primary" type="submit">${authMode === 'login' ? 'Entrar' : 'Crear cuenta'}</button></form><div class="auth-switch"><button class="text" data-action="auth-switch">${authMode === 'login' ? 'Crear una cuenta' : 'Ya tengo una cuenta'}</button></div></section>`;
   syncDock();
+  const usernameInput = document.querySelector('#username');
+  const trimUsername = () => { const trimmed = usernameInput.value.trim(); if (trimmed !== usernameInput.value) usernameInput.value = trimmed; };
+  usernameInput.addEventListener('input', trimUsername);
+  usernameInput.addEventListener('change', trimUsername);
   document.querySelector('#auth-form').onsubmit = async e => {
     e.preventDefault(); const form = e.currentTarget, button = form.querySelector('[type=submit]'); button.disabled = true;
     const error = document.querySelector('#auth-error'); error.hidden = true;
