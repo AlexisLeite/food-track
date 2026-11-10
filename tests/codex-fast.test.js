@@ -24,11 +24,12 @@ readline.createInterface({input:process.stdin}).on('line', line => {
  if (!msg.id) return;
  if (msg.method === 'initialize') emit({id:msg.id,result:{}});
  if (msg.method === 'thread/start') {
-  if(p.model !== 'gpt-6.1-terra' || p.serviceTier !== 'fast' || p.ephemeral !== true || p.config.web_search !== 'disabled' || p.config.features.fast_mode !== true || p.config.features.code_mode_host !== false || !p.baseInstructions.includes('No uses herramientas') || p.baseInstructions.length > 1000) process.exit(3);
+  if(p.model !== 'gpt-6.1-terra' || p.serviceTier !== 'fast' || p.ephemeral !== true || p.config.web_search !== 'live' || p.config.features.fast_mode !== true || p.config.features.code_mode_host !== true || !p.baseInstructions.includes('Tu única herramienta permitida es búsqueda web') || !p.baseInstructions.includes('Uruguay') || !p.baseInstructions.includes('fabricante') || p.baseInstructions.length > 1000) process.exit(3);
   const id = 'thread-' + (++seq); threads.add(id); emit({id:msg.id,result:{thread:{id}}});
  }
  if (msg.method === 'turn/start') {
   if(p.effort !== 'low' || p.serviceTier !== 'fast' || !threads.has(p.threadId) || p.model !== 'gpt-6.1-terra') process.exit(4);
+  if(p.input[0].text.includes('No uses herramientas') || p.input[0].text.includes('No uses otras herramientas')) process.exit(5);
   const schema = p.outputSchema, workout = !!schema.properties.options?.items?.properties?.activities;
   const result = workout ? {options:[1,2,3].map(i=>({name:'Moderado '+i,details:'Supuesto',activities:[{name:'Caminar',minutes:30,met:4}]}))} : schema.required.includes('description')
    ? { description: 'Comida', options: [{ name: 'Huevos', portion: 'Dos unidades', calories: 142, protein: 12, fat: 10, carbs: 1, details: 'Estimación' }] }
