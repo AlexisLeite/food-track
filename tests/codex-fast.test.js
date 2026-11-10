@@ -31,8 +31,9 @@ readline.createInterface({input:process.stdin}).on('line', line => {
   if(p.effort !== 'low' || p.serviceTier !== 'fast' || !threads.has(p.threadId) || p.model !== 'gpt-6.1-terra') process.exit(4);
   if(p.input[0].text.includes('No uses herramientas') || p.input[0].text.includes('No uses otras herramientas')) process.exit(5);
   const schema = p.outputSchema, workout = !!schema.properties.options?.items?.properties?.activities;
+  if(schema.required.includes('description') && JSON.stringify(schema.properties.options.anyOf)!==JSON.stringify([{maxItems:0},{minItems:3,maxItems:5}]))process.exit(6);
   const result = workout ? {options:[1,2,3].map(i=>({name:'Moderado '+i,details:'Supuesto',activities:[{name:'Caminar',minutes:30,met:4}]}))} : schema.required.includes('description')
-   ? { description: 'Comida', options: [{ name: 'Huevos', portion: 'Dos unidades', calories: 142, protein: 12, fat: 10, carbs: 1, details: 'Estimación' }] }
+   ? { description: 'Comida', options: [1,2,3].map(i=>({ name: 'Huevos '+i, portion: 'Dos unidades', calories: 142, protein: 12, fat: 10, carbs: 1, details: 'Estimación' })) }
    : { options: [{ index: 0, protein: 12, fat: 10, carbs: 1 }] };
   emit({id:msg.id,result:{turn:{id:'turn-'+seq}}});
   emit({method:'item/completed',params:{threadId:p.threadId,item:{id:'answer',type:'agentMessage',text:JSON.stringify(result)}}});
@@ -49,10 +50,10 @@ readline.createInterface({input:process.stdin}).on('line', line => {
     const records=[];
     await withTokenTracking({record:r=>records.push(structuredClone(r))},async()=>{
     assert.equal((await analyzePhoto(join(dir, 'photo.jpg'))).options[0].calories, 142);
-    assert.equal((await analyzePhoto(join(dir, 'photo.jpg'), 'Dos huevos, sin aceite')).options.length, 1);
+    assert.equal((await analyzePhoto(join(dir, 'photo.jpg'), 'Dos huevos, sin aceite')).options.length, 3);
     assert.equal((await analyzeDescription('Dos huevos')).options[0].calories, 142);
     assert.equal((await analyzeWorkout('Caminé 30 minutos')).options[0].activities[0].minutes,30);
-    assert.equal((await analyzeDescription('Dos huevos', 'Sin aceite')).options.length, 1);
+    assert.equal((await analyzeDescription('Dos huevos', 'Sin aceite')).options.length, 3);
     assert.equal((await estimateMissingMacros(join(dir, 'photo.jpg'), [{ index: 0, calories: 142 }], '') )[0].protein, 12);
     });
     const final=records.filter(r=>r.status==='completed');assert.equal(final.length,6);

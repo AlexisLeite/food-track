@@ -605,6 +605,10 @@ test('new analyses require numeric nonnegative macros; nonfood may return no opt
   });
   assert.equal(validateAnalysis(analysis([option])).options[0].protein, 5.2);
   assert.deepEqual(validateAnalysis(analysis([])).options, []);
+  const currentExtraction = { minimumOptions: 3, maximumOptions: 5 };
+  assert.deepEqual(validateAnalysis(analysis([]), currentExtraction).options, []);
+  for (const count of [1, 2, 6]) assert.throws(() => validateAnalysis(analysis(Array(count).fill(option)), currentExtraction));
+  for (const count of [3, 4, 5]) assert.equal(validateAnalysis(analysis(Array(count).fill(option)), currentExtraction).options.length, count);
   for (const key of ['protein', 'fat', 'carbs']) {
     for (const value of [undefined, null, '10', -1, NaN, Infinity, 2501]) assert.throws(() => validateAnalysis(analysis([{
       ...option,
