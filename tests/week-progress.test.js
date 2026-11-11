@@ -60,3 +60,19 @@ test('clipped chart includes hidden six-day context and remains continuous acros
  const stripped=chart.replace(/<path d="[^"]*" class="chart-week-progress"><title>[^<]*<\/title><\/path>/g,'');
  assert.equal(stripped,original);
 });
+
+test('rolling chart interpolates missing edges and runs without extending past 28 days or today', () => {
+ const input=Array.from({length:45},(_,i)=>day(offset('2026-10-01',i),1800+i*10));
+ for(const entry of input)if(['2026-10-14','2026-10-20','2026-10-21','2026-10-22','2026-11-09','2026-11-10'].includes(entry.date)){entry.actual.calories=null;entry.meals=0;}
+ const snapshot=structuredClone(input);
+ const chart=historyChart({start:input[0].date,end:input.at(-1).date,days:input},'calories',{asOf:'2026-11-10'});
+ const path=chart.match(/<path d="([^"]*)" class="chart-week-progress"/)[1];
+ assert.equal((path.match(/M/g)||[]).length,1);
+ assert.equal((path.match(/C/g)||[]).length,27);
+ const coordinates=[...path.matchAll(/([-\d.]+),([-\d.]+)/g)].map(match=>[Number(match[1]),Number(match[2])]);
+ const x=date=>46+input.findIndex(day=>day.date===date)*360/(input.length-1);
+ assert.ok(Math.abs(coordinates[0][0]-x('2026-10-14'))<.1);
+ assert.ok(Math.abs(coordinates.at(-1)[0]-x('2026-11-10'))<.1);
+ assert.deepEqual(input,snapshot);
+ assert.equal(rollingWeekProgress(input,'2026-11-10').has('2026-11-10'),false);
+});

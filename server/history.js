@@ -55,25 +55,22 @@ export function buildWeek({ date, meals, goals, profile, asOf = date, workouts =
   const target = history.days.reduce((sum, day) => sum + (day.target?.calories ?? (!goals.length ? profile?.dailyCalories : 0) ?? 0), 0);
   const dailyMaintenance = history.days.map(day => day.maintenance?.calories ?? (!goals.length ? profile?.expenditure : undefined));
   const maintenance = dailyMaintenance.every(Number.isFinite) ? dailyMaintenance.reduce((sum, calories) => sum + calories, 0) : null;
-  // Future days share today's allocation; future weeks begin their own Sunday.
+  // Weekly consumption is informational; it never changes a daily target.
   const consumedBeforeDate = history.days.filter(day => day.date < allocationDate).reduce((sum, day) => sum + (day.actual.calories ?? 0), 0);
   const daysRemaining = Math.round((Date.parse(end) - Date.parse(allocationDate)) / 86400000) + 1;
   const exerciseToday = exerciseCalories(date, effectiveGoals, workouts, asOf);
-  const exerciseBefore = history.days.filter(day => day.date < allocationDate).reduce((sum, day) => sum + exerciseCalories(day.date, effectiveGoals, workouts, asOf), 0);
   const exerciseWeek = history.days.reduce((sum, day) => sum + exerciseCalories(day.date, effectiveGoals, workouts, asOf), 0);
   const remaining = target - consumedBeforeDate + exerciseWeek;
-  // Past exercise offsets past consumption. Today's session belongs to today;
-  // it is not also distributed across every remaining day.
-  const rawDailyCalories = (target - consumedBeforeDate + exerciseBefore) / daysRemaining;
-  const allocationProfile = profileAt(effectiveGoals, allocationDate) || profile;
-  const minimumDailyCalories = getCalorieLimits(allocationProfile || {}).minimum;
+  const dailyProfile = profileAt(effectiveGoals, date) || profile;
+  const rawDailyCalories = dailyProfile?.dailyCalories ?? 0;
+  const minimumDailyCalories = getCalorieLimits(dailyProfile || {}).minimum;
   return { start, end,
     total: history.days.reduce((sum, day) => sum + (day.actual.calories ?? 0), 0),
     target: target + exerciseWeek, maintenance: maintenance === null ? null : maintenance + exerciseWeek,
     exerciseCalories: exerciseToday, exerciseWeekCalories: exerciseWeek,
     consumedBeforeDate, daysRemaining, remaining, rawDailyCalories,
-    minimumDailyCalories, limited: Math.round(rawDailyCalories) < minimumDailyCalories,
-    dailyCalories: Math.max(minimumDailyCalories, Math.round(rawDailyCalories)) + exerciseToday
+    minimumDailyCalories, limited: false,
+    dailyCalories: Math.round(rawDailyCalories) + exerciseToday
   };
 }
 

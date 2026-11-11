@@ -48,3 +48,31 @@ test('calorie scale excludes hidden daily spikes but includes the visible rollin
  const circle=above.match(/<circle cx="[^"]*" cy="([^"]*)" r="2.5"/);
  assert.ok(circle && Number(circle[1])>=18 && Number(circle[1])<=204);
 });
+
+test('missing chart values interpolate between neighbors and extend the nearest value at either edge', async () => {
+ const { interpolateMissingValues: fill } = await import('../public/history.js');
+ assert.deepEqual(fill([null,10,null,null,40,null,null]),[10,10,20,30,40,40,40]);
+ assert.deepEqual(fill([null,null,12,null]),[12,12,12,12]);
+ assert.deepEqual(fill([30,null,null,0]),[30,20,10,0]);
+ assert.deepEqual(fill([0,null,20,null,0]),[0,10,20,10,0]);
+ assert.deepEqual(fill([null,undefined,NaN,Infinity]),[null,null,null,null]);
+ assert.deepEqual(fill([]),[]);
+ const source=[null,10,null,30];fill(source);assert.deepEqual(source,[null,10,null,30]);
+});
+
+test('nutrient chart bridges missing days without adding recorded points or changing the table', () => {
+ const values=[null,10,null,null,40,null,null];
+ const days=values.map((value,i)=>({date:`2026-11-0${i+1}`,actual:{protein:value},target:{protein:50},meals:value===null?0:1}));
+ const history={start:days[0].date,end:days.at(-1).date,days};
+ const original=structuredClone(history),chart=historyChart(history,'protein');
+ const path=chart.match(/<path d="([^"]*)" class="chart-actual"/)[1];
+ assert.equal((path.match(/M/g)||[]).length,1);
+ assert.equal((path.match(/C/g)||[]).length,6);
+ assert.equal((chart.match(/class="chart-point-actual"/g)||[]).length,2);
+ assert.equal((chart.match(/>Sin registro<\/td>/g)||[]).length,5);
+ assert.doesNotMatch(chart,/Los huecos/);
+ assert.deepEqual(history,original);
+ const empty=historyChart({...history,days:days.map(day=>({...day,actual:{protein:null},meals:0}))},'protein');
+ assert.match(empty,/<path d="" class="chart-actual"/);
+ assert.match(empty,/Todavía no hay registros/);
+});

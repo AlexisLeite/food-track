@@ -301,7 +301,7 @@ test('account isolation, persistent options, totals, retry and session revocatio
     });
     assert.equal(monday.body.total, 0);
     assert.equal(monday.body.week.total, 100);
-    assert.equal(monday.body.week.dailyCalories, Math.round((maintain.body.profile.dailyCalories * 7 - 100) / 6));
+    assert.equal(monday.body.week.dailyCalories, maintain.body.profile.dailyCalories);
     const mondayHistory = await request('/api/history?days=7&end=2026-10-19', {
       cookie: a
     });
@@ -784,7 +784,7 @@ test('projections show deadline weight and time to goal for loss, gain and maint
   }), null);
   assert.equal(withMacroPlan(base).projection.estimatedTargetDate, loss.estimatedTargetDate);
 });
-test('daily budget spends only prior days and includes today in remaining days', () => {
+test('daily targets remain fixed regardless of missing records or excessive weekly consumption', () => {
   const profile = {
     weight: 80,
     targetWeight: 75,
@@ -819,7 +819,7 @@ test('daily budget spends only prior days and includes today in remaining days',
     goals,
     profile
   });
-  assert.equal(monday.dailyCalories, 1900);
+  assert.equal(monday.dailyCalories, 2000);
   assert.equal(monday.daysRemaining, 6);
   assert.equal(monday.remaining, 11400);
   const saturday = buildWeek({
@@ -828,7 +828,7 @@ test('daily budget spends only prior days and includes today in remaining days',
     goals,
     profile
   });
-  assert.equal(saturday.dailyCalories, 10600);
+  assert.equal(saturday.dailyCalories, 2000);
   assert.equal(saturday.daysRemaining, 1);
   const exhausted = buildWeek({
     date: '2026-10-19',
@@ -836,17 +836,17 @@ test('daily budget spends only prior days and includes today in remaining days',
     goals,
     profile
   });
-  assert.equal(exhausted.rawDailyCalories, -1000 / 6);
-  assert.equal(exhausted.dailyCalories, 0);
+  assert.equal(exhausted.rawDailyCalories, 2000);
+  assert.equal(exhausted.dailyCalories, 2000);
   const history = buildHistory({
     start: '2026-10-19',
     end: '2026-10-19',
     meals,
     goals
   });
-  assert.equal(history.days[0].target.calories, 1900);
+  assert.equal(history.days[0].target.calories, 2000);
   assert.equal(history.days[0].actual.calories, 800);
-  assert.equal(history.days[0].target.protein, 142.5);
+  assert.equal(history.days[0].target.protein, 150);
   const next = buildWeek({
     date: '2026-10-25',
     meals,
@@ -900,9 +900,9 @@ test('historical profiles retain their 1200 cap and new profiles default to ten 
       })
     }]
   });
-  assert.equal(budget.dailyCalories, 1297);
+  assert.equal(budget.dailyCalories, 1500);
   assert.equal(budget.minimumDailyCalories, 1297);
-  assert.equal(budget.limited, true);
+  assert.equal(budget.limited, false);
   const uncapped = calculateProfile({
     ...profile,
     targetDate: '2026-11-15'
@@ -921,6 +921,6 @@ test('historical profiles retain their 1200 cap and new profiles default to ten 
       })
     }]
   });
-  assert.equal(redistributed.dailyCalories, 1297);
-  assert.equal(redistributed.limited, true);
+  assert.equal(redistributed.dailyCalories, 1500);
+  assert.equal(redistributed.limited, false);
 });

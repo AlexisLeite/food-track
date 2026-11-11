@@ -10,6 +10,8 @@ import { migrateSqlite, snapshotSqlite, tables } from '../scripts/migrate-sqlite
 import { createApplication as legacyApplication } from './helpers/application.js';
 import { startTokenExecution } from '../server/token-usage.js';
 import pg from 'pg';
+import { today } from '../server/nutrition.js';
+import { dateOffset } from '../server/history.js';
 
 const url = process.env.TEST_DATABASE_URL;
 async function isolatedDatabase() {
@@ -86,7 +88,7 @@ test('PostgreSQL app: login, profiles, parallel quotas, durable/retried jobs, re
     return {status:r.status,data,cookie:r.headers.get('set-cookie')?.split(';')[0]};
   };
   const key=()=>randomBytes(32).toString('hex');
-  const day='2026-11-09';
+  const day=today();
   try {
     await boot();
     const a=await request('/api/register',{method:'POST',body:{username:'alexis',password:'test-password-123'}}),b=await request('/api/register',{method:'POST',body:{username:'another',password:'test-password-123'}});
@@ -96,7 +98,9 @@ test('PostgreSQL app: login, profiles, parallel quotas, durable/retried jobs, re
     assert.equal((await request('/api/register',{method:'POST',body:{username:'alexis',password:'test-password-123'}})).status,409);
     const cookie=a.cookie,id=a.data.user.id;
     const profile={height:180,age:35,weight:85,targetWeight:80,gender:'male',activity:'light',targetDate:'2027-06-01',expenditureMode:'workouts',dailyActivity:'sedentary',maxDailyDeficitPercent:10};
-    assert.equal((await request('/api/profile',{method:'PUT',body:profile,cookie})).status,200);
+    const configured=await request('/api/profile',{method:'PUT',body:profile,cookie});
+    assert.equal(configured.status,200);
+    assert.equal((await request('/api/day?date='+day,{cookie})).data.week.dailyCalories,configured.data.profile.dailyCalories);
     await application.db.prepare('UPDATE users SET enable_codex_extraction=1 WHERE id=?').run(id);
     const jobs=[];
     for(let n=0;n<4;n++){
@@ -115,7 +119,7 @@ test('PostgreSQL app: login, profiles, parallel quotas, durable/retried jobs, re
     assert.equal((await request('/api/extractions/'+jobs[0].id,{cookie:b.cookie})).status,404);
     const analysis=result.data.result.meal.analyses[0];
     assert.equal((await request(`/api/meals/${jobs[0].mealId}/selection`,{method:'PUT',body:{analysisId:analysis.id,optionIndex:0},cookie})).status,200);
-    assert.equal((await request(`/api/meals/${jobs[0].mealId}/repeat`,{method:'POST',body:{date:'2026-11-10'},cookie})).status,201);
+    assert.equal((await request(`/api/meals/${jobs[0].mealId}/repeat`,{method:'POST',body:{date:dateOffset(day,1)},cookie})).status,201);
     const exercise=await request('/api/workouts',{method:'POST',body:{date:day,description:'walk'},cookie,key:key()});assert.equal(exercise.status,202,JSON.stringify(exercise));
     await until(async()=> (await application.db.prepare('SELECT COUNT(*) AS n FROM workouts').get()).n===1);
     const workout=(await request('/api/workouts?date='+day,{cookie})).data.workouts[0];

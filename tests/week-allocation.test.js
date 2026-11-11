@@ -23,7 +23,7 @@ const meal = (date, calories) => ({
   })
 });
 const meals = [meal('2026-10-18', 2600), meal('2026-10-19', 1800), meal('2026-10-20', 2200), meal('2026-10-21', 800), meal('2026-10-22', 5000)];
-test('Wednesday through Saturday share the remaining budget, ignoring current and future intake', () => {
+test('daily targets stay fixed despite past, current and future intake', () => {
   for (const date of ['2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24']) {
     const budget = buildWeek({
       date,
@@ -32,7 +32,7 @@ test('Wednesday through Saturday share the remaining budget, ignoring current an
       goals,
       profile
     });
-    assert.equal(budget.dailyCalories, 1850);
+    assert.equal(budget.dailyCalories, 2000);
     assert.equal(budget.daysRemaining, 4);
     assert.equal(budget.remaining, 7400);
     assert.equal(budget.consumedBeforeDate, 6600);
@@ -44,10 +44,10 @@ test('Wednesday through Saturday share the remaining budget, ignoring current an
     meals,
     goals
   });
-  assert.equal(history.days[0].target.calories, 1920);
+  assert.equal(history.days[0].target.calories, 2000);
   for (const day of history.days.slice(1)) {
-    assert.equal(day.target.calories, 1850);
-    assert.equal(day.target.protein, 138.8);
+    assert.equal(day.target.calories, 2000);
+    assert.equal(day.target.protein, 150);
   }
   for (const date of ['2026-10-22', '2026-10-23', '2026-10-24']) {
     assert.equal(buildWeek({
@@ -56,10 +56,10 @@ test('Wednesday through Saturday share the remaining budget, ignoring current an
       meals,
       goals,
       profile
-    }).dailyCalories, 2200);
+    }).dailyCalories, 2000);
   }
 });
-test('future weeks restart on Sunday and the deficit limit applies equally to remaining days', () => {
+test('new weeks and excessive intake never redistribute daily targets', () => {
   for (const date of ['2026-10-25', '2026-10-28', '2026-10-31']) {
     const budget = buildWeek({
       date,
@@ -79,11 +79,11 @@ test('future weeks restart on Sunday and the deficit limit applies equally to re
       goals,
       profile
     });
-    assert.equal(budget.dailyCalories, 1300);
-    assert.equal(budget.limited, true);
+    assert.equal(budget.dailyCalories, 2000);
+    assert.equal(budget.limited, false);
   }
 });
-test('day and history APIs use today when projecting all remaining days', async () => {
+test('day and history APIs keep fixed targets when earlier days have no records', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'foodtrack-allocation-'));
   const {
     app,
@@ -119,8 +119,7 @@ test('day and history APIs use today when projecting all remaining days', async 
       } = weekRange(current);
     await db.prepare('UPDATE users SET profile=? WHERE id=?').run(JSON.stringify(profile), user.id);
     await db.prepare('INSERT INTO profile_goals VALUES(?,?,?)').run(user.id, start, JSON.stringify(profile));
-    const daysRemaining = Math.round((Date.parse(end) - Date.parse(current)) / 86400000) + 1;
-    const expected = Math.round(14000 / daysRemaining);
+    const expected = profile.dailyCalories;
     for (let date = current; date <= end; date = dateOffset(date, 1)) {
       const response = await fetch(`${base}/api/day?date=${date}`, {
         headers: {

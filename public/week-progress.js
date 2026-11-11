@@ -3,10 +3,13 @@ const offsetDate = (date, offset) => {
   value.setUTCDate(value.getUTCDate() + offset);
   return value.toISOString().slice(0,10);
 };
+export function rollingWeekWindow(asOf, end = asOf) {
+  const last = end < asOf ? end : asOf;
+  return { first: offsetDate(last, -27), last };
+}
 // Each point compares only that date and its six preceding calendar days.
 export function rollingWeekProgress(days, asOf, currentMaintenance, end = asOf) {
-  const last = end < asOf ? end : asOf;
-  const first = offsetDate(last, -27);
+  const { first, last } = rollingWeekWindow(asOf, end);
   const byDate = new Map(days.map(day => [day.date, day]));
   const result = new Map();
   for (let date = first; date <= last; date = offsetDate(date, 1)) {

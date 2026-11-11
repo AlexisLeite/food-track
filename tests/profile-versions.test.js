@@ -14,7 +14,7 @@ const updated = { weight:80,targetWeight:85,dailyCalories:2600,expenditure:2800 
 const goal = (date,profile) => ({date,profile:JSON.stringify(profile)});
 const meal = (date,calories) => ({date,selected:JSON.stringify({calories,protein:10,fat:10,carbs:10})});
 
-test('midweek edits preserve all earlier targets/macros/maintenance and split the remaining budget at the effective date',()=>{
+test('midweek edits preserve all earlier targets/macros/maintenance and apply the new fixed target at the effective date',()=>{
  const start='2026-10-25',end='2026-10-31',asOf='2026-10-29';
  const goals=[goal(start,original)];
  const meals=[meal('2026-10-25',2100),meal('2026-10-26',1800),meal('2026-10-27',1900),meal('2026-10-28',2000)];
@@ -25,7 +25,7 @@ test('midweek edits preserve all earlier targets/macros/maintenance and split th
  const budget=buildWeek({date:asOf,asOf,goals:changed,meals,profile:updated});
  assert.equal(budget.target,4*2000+3*2600);
  assert.equal(budget.consumedBeforeDate,7800);
- assert.equal(budget.dailyCalories,Math.round((4*2000+3*2600-7800)/3));
+ assert.equal(budget.dailyCalories,2600);
  assert.equal(budget.maintenance,4*2500+3*2800);
  for(const day of after.days.slice(4)){
   assert.equal(day.target.calories,budget.dailyCalories);assert.equal(day.maintenance.calories,2800);

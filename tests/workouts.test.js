@@ -36,7 +36,7 @@ const alternatives = {
     }]
   }))
 };
-test('new profiles default to ten percent; forty is the product ceiling, including weekly redistribution', () => {
+test('new profiles default to ten percent; forty is the product ceiling, without weekly redistribution', () => {
   for (const percent of [0, 10, 40]) {
     const p = calculateProfile({
       ...input,
@@ -113,7 +113,7 @@ test('exercise estimation uses weight and subtracts resting energy; malformed an
     }]
   }, 80));
 });
-test('confirmed workouts add only to their day, carry unused weekly calories forward and enter a rolling seven-day balance', () => {
+test('confirmed workouts add only to their day, keep other daily targets fixed and enter a rolling seven-day balance', () => {
   const start = '2026-11-01',
     end = '2026-11-14',
     current = '2026-11-06';
@@ -160,6 +160,8 @@ test('confirmed workouts add only to their day, carry unused weekly calories for
   assert.equal(budget.exerciseCalories, 300);
   assert.equal(budget.target, 7 * 1800 + 300);
   assert.equal(budget.maintenance, 7 * 2000 + 300);
+  assert.equal(buildWeek({ date: current, goals, profile: p, meals: [], workouts, asOf: end }).dailyCalories, 2100);
+  assert.equal(buildWeek({ date: '2026-11-07', goals, profile: p, meals: [], workouts, asOf: end }).dailyCalories, 1800);
   const history = buildHistory({
     start,
     end,
