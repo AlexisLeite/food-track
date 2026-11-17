@@ -1,3 +1,4 @@
+import { REQUEST_ERROR_MESSAGE } from './errors.js';
 import { usageBudgetMarkup } from './usage-budget.js?v=20261108-budget-1';
 import { pollExtraction } from './extractions.js?v=20261108-queue-1';
 import { dateSelectorMarkup, dailyRecordMarkup } from './daily-view.js?v=20261106-workout-layout-1';
@@ -5,12 +6,12 @@ function applyTheme(theme = 'dark') {
   document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
   document.querySelector('meta[name="theme-color"]').content = theme === 'light' ? '#ffffff' : '#161616';
 }
-import { createOutbox, processFoodSubmission, submissionHash } from './outbox.js?v=20261106-expenditure-1';
-import { createAssistant } from './assistant.js?v=20261026-mobile-keyboard-2';
+import { createOutbox, processFoodSubmission, submissionHash } from './outbox.js?v=20261117-private-errors-1';
+import { createAssistant } from './assistant.js?v=20261117-private-errors-1';
 import { calorieProgressMarkup } from './calorie-progress.js?v=20261106-theme-1';
 import './dock-offset.js?v=20261023-safari-offset-16';
 import { bindDaySwipe } from './swipe.js?v=20261023-day-swipe-1';
-import { readApiResponse } from './api-response.js?v=20261023-audio-errors-1';
+import { readApiResponse } from './api-response.js?v=20261117-private-errors-1';
 import { processingMarkup } from './processing.js';
 import { getMacroPlan, getGoalProjection, getCalorieLimits, defaultMaxDailyDeficitPercent, maxDailyDeficitPercent, activityFactors, dailyActivityFactors, hasMacros, summarizeMeals } from './nutrition.js?v=20261106-expenditure-1';
 import { historyChart } from './history.js?v=20261111-interpolated-gaps-1';
@@ -103,7 +104,7 @@ async function requestApi(url, options = {}) {
   if (known?.etag) headers['If-None-Match'] = known.etag;
   if (options.body && !(options.body instanceof FormData)) { headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(options.body); }
   let res;
-  try { res = await fetch(url, { ...options, headers }); } catch { throw new Error('No hay conexión. Volvé a intentarlo.'); }
+  try { res = await fetch(url, { ...options, headers }); } catch { throw new Error(REQUEST_ERROR_MESSAGE); }
   if (res.status === 304 && known) return { data: known.data, etag: known.etag };
   let data;
   try { data = await readApiResponse(res); }

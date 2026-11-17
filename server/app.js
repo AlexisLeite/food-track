@@ -1,4 +1,5 @@
 import { createExtractionQueue } from './extraction-queue.js';
+import { REQUEST_ERROR_MESSAGE } from '../public/errors.js';
 import { installUsageLimits } from './usage-limits.js';
 import { createSemaphore } from './semaphore.js';
 import { installTokenUsage, withTokenTracking, canViewStatistics, tokenStatistics } from './token-usage.js';
@@ -406,10 +407,12 @@ export async function createApplication({
       logExecution('assistant_request', {
         phase: 'failed',
         userId: req.user.id,
+        reason: error.message,
+        code: error.code,
         aborted: controller.signal.aborted
       });
       if (!controller.signal.aborted) send('error', {
-        text: error.message || 'El asistente no pudo responder.'
+        text: REQUEST_ERROR_MESSAGE
       });
     } finally {
       releaseChat?.();
@@ -802,7 +805,7 @@ export async function createApplication({
     });
   });
   app.use('/api', (req, res) => res.status(404).json({
-    error: 'Ruta no encontrada.'
+    error: REQUEST_ERROR_MESSAGE
   }));
   app.use(express.static(publicDir, {
     etag: true,
@@ -811,10 +814,9 @@ export async function createApplication({
   app.use((err, req, res, next) => {
     let status = err.status || 500;
     if (err instanceof multer.MulterError) status = 400;
-    const message = err.code === 'LIMIT_FILE_SIZE' ? 'El archivo supera el tamaño permitido (12 MB para fotos, 8 MB para audio).' : err instanceof multer.MulterError ? 'Subí una sola foto de hasta 12 MB.' : status < 500 || status === 502 ? err.message : 'Ocurrió un error. Volvé a intentarlo.';
-    if (status === 500) console.error('Request failed:', err.code || err.name);
+    logExecution('request_error', { status, code: err.code, name: err.name, reason: err.message });
     res.status(status).json({
-      error: message,
+      error: REQUEST_ERROR_MESSAGE,
       ...(['CODEX_EXTRACTION_DISABLED', 'USAGE_LIMIT'].includes(err.code) ? {
         code: err.code
       } : {})

@@ -1,3 +1,4 @@
+import { REQUEST_ERROR_MESSAGE } from './errors.js';
 export async function submissionHash(value) {
   const bytes = new TextEncoder().encode(value);
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(byte => byte.toString(16).padStart(2, '0')).join('');
@@ -60,7 +61,7 @@ export function createOutbox({ store = createOutboxStore(), notify = () => {} } 
         row.append(preview);
       }
       if (item.text) { const text = document.createElement('p'); text.textContent = item.text; row.append(text); }
-      const status = document.createElement('small'); status.textContent = running.has(item.id) ? 'Enviando…' : item.error || 'Guardado en este dispositivo'; row.append(status);
+      const status = document.createElement('small'); status.textContent = running.has(item.id) ? 'Enviando…' : (item.error ? REQUEST_ERROR_MESSAGE : 'Guardado en este dispositivo'); row.append(status);
       const actions = document.createElement('div'); actions.className = 'pending-actions';
       for (const [label, action] of [['Reintentar', () => retry(item.id).catch(() => {})], ['Eliminar', async () => {
         try { await store.remove(item.id); items.delete(item.id); render(); } catch { notify('No se pudo eliminar el envío pendiente.', true); }
@@ -83,9 +84,9 @@ export function createOutbox({ store = createOutboxStore(), notify = () => {} } 
       const result = await handler(item, checkpoint, checkUser);
       await store.remove(id); items.delete(id); return result;
     } catch (error) {
-      item.error = error.message || 'No se pudo enviar.';
+      item.error = REQUEST_ERROR_MESSAGE;
       try { await store.put(item); } catch { item.error = 'No se pudo guardar en el dispositivo. No cierres esta página.'; }
-      if (identity === userId) { panel.open = true; notify(`${item.error} El envío sigue pendiente.`, true); }
+      if (identity === userId) { panel.open = true; notify(REQUEST_ERROR_MESSAGE, true); }
       throw error;
     } finally { running.delete(id); render(); }
   }

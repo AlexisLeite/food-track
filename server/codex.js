@@ -6,12 +6,17 @@ import { codexServer } from './codex-server.js';
 
 const extractionInstructions = new URL('./extraction-instructions.txt', import.meta.url);
 const extractionModel = 'gpt-6.1-terra';
-const schema = {
-  type: 'object', additionalProperties: false, required: ['description', 'options'], properties: {
-    description: { type: 'string' }, options: { type: 'array', anyOf: [{ maxItems: 0 }, { minItems: 3, maxItems: 5 }], items: {
+const foodOptionSchema = {
       type: 'object', additionalProperties: false, required: ['name', 'portion', 'calories', 'protein', 'fat', 'carbs', 'details'],
       properties: { name: { type: 'string' }, portion: { type: 'string' }, calories: { type: 'integer' }, protein: { type: 'number', minimum: 0, maximum: 2500 }, fat: { type: 'number', minimum: 0, maximum: 2500 }, carbs: { type: 'number', minimum: 0, maximum: 2500 }, details: { type: 'string' } }
-    } }
+};
+const schema = {
+  type: 'object', additionalProperties: false, required: ['description', 'options'], properties: {
+    // Each alternative must be a complete array schema for strict structured output.
+    description: { type: 'string' }, options: { anyOf: [
+      { type: 'array', maxItems: 0, items: foodOptionSchema },
+      { type: 'array', minItems: 3, maxItems: 5, items: foodOptionSchema }
+    ] }
   }
 };
 export function validateAnalysis(result, { minimumOptions = 0, maximumOptions = 8 } = {}) {

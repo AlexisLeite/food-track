@@ -1,6 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { logExecution, withRequestLog } from './execution-log.js';
 import { transaction } from './database.js';
+import { REQUEST_ERROR_MESSAGE } from '../public/errors.js';
 export const retryableExtractionError = error => error?.status === 429 || error?.status >= 500 || (!error?.status && error?.code !== 'CODEX_EXTRACTION_DISABLED');
 export async function createExtractionQueue(db, { runAs = (_user, callback) => callback(), retryDelays = [1000, 3000], concurrency = 3 } = {}) {
   if (db.dialect !== 'postgresql') db.exec(`CREATE TABLE IF NOT EXISTS extraction_jobs(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,kind TEXT NOT NULL,resource_id TEXT NOT NULL,payload TEXT NOT NULL,request_key TEXT NOT NULL,fingerprint TEXT NOT NULL,state TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,next_at INTEGER NOT NULL DEFAULT 0,result TEXT,error TEXT,created_at TEXT NOT NULL,UNIQUE(user_id,request_key)); CREATE INDEX IF NOT EXISTS extraction_jobs_state ON extraction_jobs(state,next_at);`);
@@ -58,10 +59,10 @@ export async function createExtractionQueue(db, { runAs = (_user, callback) => c
       try {
         await db.prepare('UPDATE extraction_jobs SET state=?,next_at=?,error=? WHERE id=?').run(retry ? 'queued' : 'failed', retry ? Date.now() + retryDelays[job.attempts - 1] : 0, JSON.stringify(details), job.id);
       } catch (databaseError) { logExecution('extraction_queue', { phase: 'database_error', jobId: job.id, code: databaseError.code || databaseError.name }); }
-      logExecution('extraction_queue', { phase: retry ? 'retrying' : 'failed', jobId: job.id, userId: job.user_id, attempt: job.attempts, status: details.status });
+      logExecution('extraction_queue', { phase: retry ? 'retrying' : 'failed', jobId: job.id, userId: job.user_id, attempt: job.attempts, status: details.status, code: error.code, reason: error.message });
     }
   }
-  const view = async row => ({ job: { id: row.id, state: row.state, attempts: row.attempts, ...(row.state === 'queued' ? { position: (await db.prepare(`SELECT COUNT(*) AS n FROM extraction_jobs WHERE state IN ('queued','running') AND ${order}<=(SELECT ${order} FROM extraction_jobs WHERE id=?)`).get(row.id)).n } : {}) }, ...(row.result ? { result: JSON.parse(row.result) } : {}), ...(row.state === 'failed' ? JSON.parse(row.error) : {}) });
+  const view = async row => ({ job: { id: row.id, state: row.state, attempts: row.attempts, ...(row.state === 'queued' ? { position: (await db.prepare(`SELECT COUNT(*) AS n FROM extraction_jobs WHERE state IN ('queued','running') AND ${order}<=(SELECT ${order} FROM extraction_jobs WHERE id=?)`).get(row.id)).n } : {}) }, ...(row.result ? { result: JSON.parse(row.result) } : {}), ...(row.state === 'failed' ? { error: REQUEST_ERROR_MESSAGE, status: JSON.parse(row.error).status } : {}) });
   const api = {
     register(kind, handler) { handlers.set(kind, handler); },
     start() { enabled = true; kick(); },

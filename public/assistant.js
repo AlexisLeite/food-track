@@ -1,9 +1,10 @@
-import { submissionHash } from './outbox.js?v=20261026-pending-1';
+import { REQUEST_ERROR_MESSAGE } from './errors.js';
+import { submissionHash } from './outbox.js?v=20261117-private-errors-1';
 let createMessageRenderer, rendererLoading;
 const loadRenderer=()=>rendererLoading ||= import('./vendor/assistant-renderer.js?v=20261023-chat-stream-1').then(module=>{createMessageRenderer=module.createMessageRenderer;});
 // Adapted from rulelab-wt AssistantWindow, assistant.css and messageKeys.
 // One in-memory conversation; no persistent store, model picker or context compaction.
-import { readApiResponse } from './api-response.js?v=20261023-audio-errors-1';
+import { readApiResponse } from './api-response.js?v=20261117-private-errors-1';
 const icon = paths => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
 const chatIcon = icon('<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>');
 const sendIcon = icon('<path d="m6 11 6-6 6 6M12 5v15"/>');
@@ -164,7 +165,7 @@ export function createAssistant({notify=()=>{}, outbox}={}) {
     }catch(error){
       if(turn!==generation)throw error;
       // Failed/cancelled turns do not contaminate the conversation context.
-      const item=document.createElement('p');item.className='assistant-error';item.setAttribute('role','alert');item.textContent=error.name==='AbortError'?'Consulta detenida.':error.message;messagesEl.append(item);scroll();
+      const item=document.createElement('p');item.className='assistant-error';item.setAttribute('role','alert');item.textContent=error.name==='AbortError'?'Consulta detenida.':REQUEST_ERROR_MESSAGE;messagesEl.append(item);scroll();
       throw error;
     }finally{if(turn===generation){setBusy(false);focusInput();}}
   };

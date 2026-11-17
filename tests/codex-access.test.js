@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { REQUEST_ERROR_MESSAGE } from '../public/errors.js';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -112,8 +113,7 @@ test('all accounts default to zero; only SQL enables extraction and revocation a
     });
     assert.equal(denied.status, 403);
     assert.equal(denied.body.code, 'CODEX_EXTRACTION_DISABLED');
-    assert.match(denied.body.error, /No tenés autorización/);
-    assert.match(denied.body.error, /Contactá con el administrador/);
+    assert.equal(denied.body.error, REQUEST_ERROR_MESSAGE);
     const image = await sharp({
       create: {
         width: 10,

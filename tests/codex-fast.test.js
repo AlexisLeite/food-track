@@ -31,7 +31,14 @@ readline.createInterface({input:process.stdin}).on('line', line => {
   if(p.effort !== 'low' || p.serviceTier !== 'fast' || !threads.has(p.threadId) || p.model !== 'gpt-6.1-terra') process.exit(4);
   if(p.input[0].text.includes('No uses herramientas') || p.input[0].text.includes('No uses otras herramientas')) process.exit(5);
   const schema = p.outputSchema, workout = !!schema.properties.options?.items?.properties?.activities;
-  if(schema.required.includes('description') && JSON.stringify(schema.properties.options.anyOf)!==JSON.stringify([{maxItems:0},{minItems:3,maxItems:5}]))process.exit(6);
+  if(schema.required.includes('description')) {
+   const alternatives=schema.properties.options.anyOf;
+   if(alternatives?.length!==2 || alternatives[0].maxItems!==0 || alternatives[1].minItems!==3 || alternatives[1].maxItems!==5)process.exit(6);
+   // Strict output requires every anyOf branch to define its own type and items.
+   for(const branch of alternatives) {
+    if(branch.type!=='array' || branch.items?.type!=='object' || branch.items.additionalProperties!==false || !['name','portion','calories','protein','fat','carbs','details'].every(key=>branch.items.required.includes(key) && branch.items.properties[key]))process.exit(7);
+   }
+  }
   const result = workout ? {options:[1,2,3].map(i=>({name:'Moderado '+i,details:'Supuesto',activities:[{name:'Caminar',minutes:30,met:4}]}))} : schema.required.includes('description')
    ? { description: 'Comida', options: [1,2,3].map(i=>({ name: 'Huevos '+i, portion: 'Dos unidades', calories: 142, protein: 12, fat: 10, carbs: 1, details: 'Estimación' })) }
    : { options: [{ index: 0, protein: 12, fat: 10, carbs: 1 }] };
