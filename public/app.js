@@ -14,7 +14,7 @@ import { bindDaySwipe } from './swipe.js?v=20261023-day-swipe-1';
 import { readApiResponse } from './api-response.js?v=20261117-private-errors-1';
 import { processingMarkup } from './processing.js';
 import { getMacroPlan, getGoalProjection, getCalorieLimits, defaultMaxDailyDeficitPercent, maxDailyDeficitPercent, activityFactors, dailyActivityFactors, hasMacros, summarizeMeals } from './nutrition.js?v=20261106-expenditure-1';
-import { historyChart } from './history.js?v=20261111-interpolated-gaps-1';
+import { historyChart } from './history.js?v=20261122-workout-balance-1';
 import { createVoiceInput } from './voice.js?v=20261106-expenditure-1';
 import { createUserCache, isCancelledError } from './cache.js?v=20261020-week-allocation-1';
 const outbox = createOutbox({ notify: (message,error) => toast(message,error) });

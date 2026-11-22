@@ -1,5 +1,5 @@
 import { smoothChartPath } from './chart-path.js?v=20261023-smooth-lines-1';
-import { rollingWeekProgress, rollingWeekWindow } from './week-progress.js?v=20261111-window-1';
+import { rollingWeekProgress, rollingWeekWindow } from './week-progress.js?v=20261122-workout-balance-1';
 const fmt = value => new Intl.NumberFormat('es-UY', { maximumFractionDigits: 1 }).format(value);
 const shortDate = date => new Intl.DateTimeFormat('es-UY', { day: 'numeric', month: 'short' }).format(new Date(`${date}T12:00:00Z`));
 const labels = { calories: 'Calorías', protein: 'Proteínas', fat: 'Grasas', carbs: 'Carbohidratos' };

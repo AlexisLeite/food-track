@@ -16,7 +16,6 @@ export function rollingWeekProgress(days, asOf, currentMaintenance, end = asOf) 
     const day = byDate.get(date);
     if (!Number.isFinite(day?.actual?.calories)) continue;
     const dailyMaintenance = day.maintenance?.calories ?? currentMaintenance;
-    const dailyTarget = day.target?.calories;
     if (!Number.isFinite(dailyMaintenance) || dailyMaintenance <= 0) continue;
     const start = offsetDate(date, -6);
     let consumed = 0, maintenance = 0, target = 0, missingDays = 0, pendingDays = 0;
@@ -29,16 +28,9 @@ export function rollingWeekProgress(days, asOf, currentMaintenance, end = asOf) 
       target += Number.isFinite(entry.target?.calories) ? entry.target.calories : expenditure;
       if (entry.pendingMeals) pendingDays++;
     }
-    const balance=consumed-maintenance, goalBalance=target-maintenance;
-    const dailyGoalGap=(Number.isFinite(dailyTarget)?dailyTarget:dailyMaintenance)-dailyMaintenance;
-    // Anchor the rolling energy balance to the existing daily reference lines:
-    // consumed == maintenance -> green; consumed == target -> grey.
-    // Both references remain meaningful when the daily budget changes during the window.
-    const comparable=goalBalance!==0 && dailyGoalGap!==0 && Math.sign(goalBalance)===Math.sign(dailyGoalGap);
-    const lowerTotal=Math.min(target,maintenance), lowerDaily=Math.min(Number.isFinite(dailyTarget)?dailyTarget:dailyMaintenance,dailyMaintenance);
-    const value=comparable
-      ? consumed<=lowerTotal && lowerTotal>0 ? consumed/lowerTotal*lowerDaily : dailyMaintenance+balance/goalBalance*dailyGoalGap
-      : consumed/maintenance*dailyMaintenance;
+    const balance=consumed-maintenance;
+    // Intake alone determines the red line; targets and expenditure are comparisons.
+    const value=consumed/(7-missingDays);
     result.set(date, { value, ratio: consumed / maintenance, consumed, maintenance, target, balance,
       goalDifference: consumed - target, missingDays, pendingDays, provisional: date === asOf, start });
   }

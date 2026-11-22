@@ -2,9 +2,30 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { rollingWeekProgress } from '../public/week-progress.js';
 import { historyChart } from '../public/history.js';
+import { buildHistory } from '../server/history.js';
 const offset = (date, n) => new Date(Date.parse(`${date}T12:00:00Z`) + n * 86400000).toISOString().slice(0,10);
 const day = (date, calories) => ({date, actual:{calories}, target:{calories:1800}, maintenance:{calories:2400}, meals:calories===null?0:1, pendingMeals:0});
 const days = Array.from({length:40},(_,i)=>day(offset('2026-10-01',i),1800));
+
+test('a workout changes expenditure and balance but never the red intake average', () => {
+ const start='2026-11-16', end='2026-11-22';
+ const input={start,end,asOf:end,
+  goals:[{date:start,profile:JSON.stringify({weight:85,targetWeight:75,expenditureMode:'workouts',dailyCalories:1771,expenditure:2156})}],
+  meals:Array.from({length:7},(_,i)=>({date:offset(start,i),selected:JSON.stringify({calories:1800,protein:100,fat:60,carbs:215})}))};
+ const original=buildHistory(input);
+ for (const workoutDate of [end,offset(end,-1)]) {
+  const updated=buildHistory({...input,workouts:[{date:workoutDate,confirmed:true,calories:926}]});
+  const before=rollingWeekProgress(original.days,end), after=rollingWeekProgress(updated.days,end);
+  const workoutDay=updated.days.find(day=>day.date===workoutDate);
+  assert.equal(workoutDay.target.calories,2697);
+  assert.equal(workoutDay.maintenance.calories,3082);
+  assert.equal(after.get(end).consumed,before.get(end).consumed);
+  assert.equal(after.get(end).balance,before.get(end).balance-926);
+  assert.equal(after.get(end).value,before.get(end).value);
+  assert.equal(after.get(end).value,1800);
+  for(const [date,point] of before)if(date<workoutDate)assert.deepEqual(after.get(date),point);
+ }
+});
 
 test('each point includes exactly seven calendar days and does not reset on Sunday',()=>{
  const input=days.map(d=>({...d,actual:{calories:d.date==='2026-10-26'?9000:1800}}));
@@ -17,13 +38,13 @@ test('each point includes exactly seven calendar days and does not reset on Sund
  assert.equal(points.has('2026-11-03'),false);
 });
 
-test('rolling goal and maintenance anchors respect changes in configuration',()=>{
+test('rolling intake average does not follow changing daily goal or maintenance anchors',()=>{
  for(const source of ['target','maintenance']){
   const input=days.map((d,i)=>({...d,target:{calories:1500+i*10},maintenance:{calories:2300+i*10},actual:{calories:source==='target'?1500+i*10:2300+i*10}}));
   const points=rollingWeekProgress(input,'2026-11-01');
   for(const [date,point] of points){
-   const entry=input.find(d=>d.date===date);
-   assert.ok(Math.abs(point.value-entry[source].calories)<1e-8);
+   const values=input.filter(d=>d.date>=point.start && d.date<=date).map(d=>d.actual.calories);
+   assert.ok(Math.abs(point.value-values.reduce((sum,v)=>sum+v,0)/values.length)<1e-8);
   }
  }
 });
