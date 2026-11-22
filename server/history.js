@@ -16,6 +16,15 @@ export function exerciseCalories(date, goals, workouts = [], asOf = date) {
   if (date > asOf || profileAt(goals, date)?.expenditureMode !== 'workouts') return 0;
   return workouts.filter(w => w.date === date && w.confirmed).reduce((sum, w) => sum + (w.calories || 0), 0);
 }
+export function averageExerciseCalories(date, goals, workouts = [], asOf = date) {
+  if (profileAt(goals, date)?.expenditureMode !== 'workouts') return 0;
+  const last = date < asOf ? date : asOf;
+  let total = 0;
+  for (let cursor = dateOffset(last, -6); cursor <= last; cursor = dateOffset(cursor, 1)) {
+    total += exerciseCalories(cursor, goals, workouts, asOf);
+  }
+  return Math.round(total / 7);
+}
 function buildBaseHistory({ start, end, meals, goals }) {
   const grouped = new Map();
   for (const meal of meals) {
@@ -60,17 +69,20 @@ export function buildWeek({ date, meals, goals, profile, asOf = date, workouts =
   const daysRemaining = Math.round((Date.parse(end) - Date.parse(allocationDate)) / 86400000) + 1;
   const exerciseToday = exerciseCalories(date, effectiveGoals, workouts, asOf);
   const exerciseWeek = history.days.reduce((sum, day) => sum + exerciseCalories(day.date, effectiveGoals, workouts, asOf), 0);
-  const remaining = target - consumedBeforeDate + exerciseWeek;
+  const exerciseAverage = averageExerciseCalories(date, effectiveGoals, workouts, asOf);
+  const exerciseWeekAverage = history.days.reduce((sum, day) => sum + averageExerciseCalories(day.date, effectiveGoals, workouts, asOf), 0);
+  const remaining = target - consumedBeforeDate + exerciseWeekAverage;
   const dailyProfile = profileAt(effectiveGoals, date) || profile;
   const rawDailyCalories = dailyProfile?.dailyCalories ?? 0;
   const minimumDailyCalories = getCalorieLimits(dailyProfile || {}).minimum;
   return { start, end,
     total: history.days.reduce((sum, day) => sum + (day.actual.calories ?? 0), 0),
-    target: target + exerciseWeek, maintenance: maintenance === null ? null : maintenance + exerciseWeek,
+    target: target + exerciseWeekAverage, maintenance: maintenance === null ? null : maintenance + exerciseWeekAverage,
     exerciseCalories: exerciseToday, exerciseWeekCalories: exerciseWeek,
+    exerciseAverageCalories: exerciseAverage, exerciseWeekAverageCalories: exerciseWeekAverage,
     consumedBeforeDate, daysRemaining, remaining, rawDailyCalories,
     minimumDailyCalories, limited: false,
-    dailyCalories: Math.round(rawDailyCalories) + exerciseToday
+    dailyCalories: Math.round(rawDailyCalories) + exerciseAverage
   };
 }
 
@@ -83,7 +95,7 @@ export function buildHistory({ start, end, meals, goals, asOf = end, workouts = 
     const profile = JSON.parse(goal.profile);
     const budget = buildWeek({ date: day.date, meals, goals, profile, asOf, workouts });
     const macro = getMacroPlan({ ...profile, dailyCalories: budget.dailyCalories });
-    const exercise = exerciseCalories(day.date, goals, workouts, asOf);
+    const exercise = averageExerciseCalories(day.date, goals, workouts, asOf);
     if (exercise && day.maintenance) day.maintenance.calories += exercise;
     day.target = { calories: budget.dailyCalories, protein: macro.protein, fat: macro.fat, carbs: macro.carbs };
   }

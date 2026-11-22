@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { createApplication } from './helpers/application.js';
 import { calculateProfile, today } from '../server/nutrition.js';
 import { workoutEstimate, workoutOptions } from '../server/workouts.js';
-import { buildWeek, buildHistory, dateOffset, weekRange } from '../server/history.js';
+import { buildWeek, buildHistory, dateOffset, weekRange, averageExerciseCalories } from '../server/history.js';
 import { rollingWeekProgress } from '../public/week-progress.js';
 const input = {
   height: 175,
@@ -113,7 +113,24 @@ test('exercise estimation uses weight and subtracts resting energy; malformed an
     }]
   }, 80));
 });
-test('confirmed workouts add only to their day, keep other daily targets fixed and enter a rolling seven-day balance', () => {
+test('exercise average uses seven calendar days, crosses Sunday and ignores unconfirmed or future sessions', () => {
+  const goals=[{date:'2026-11-01',profile:JSON.stringify({expenditureMode:'workouts'})}];
+  const workouts=[
+    {date:'2026-11-14',confirmed:true,calories:7000},
+    {date:'2026-11-15',confirmed:true,calories:700},
+    {date:'2026-11-21',confirmed:true,calories:700},
+    {date:'2026-11-21',confirmed:false,calories:7000},
+    {date:'2026-11-22',confirmed:true,calories:7000}
+  ];
+  assert.equal(averageExerciseCalories('2026-11-21',goals,workouts,'2026-11-21'),200);
+  assert.equal(averageExerciseCalories('2026-11-22',goals,workouts,'2026-11-21'),200);
+  assert.equal(averageExerciseCalories('2026-11-22',goals,workouts,'2026-11-22'),1100);
+  assert.equal(averageExerciseCalories('2026-11-28',goals,workouts,'2026-11-28'),1000);
+  assert.equal(averageExerciseCalories('2026-11-29',goals,workouts,'2026-11-29'),0);
+  assert.equal(averageExerciseCalories('2026-11-21',[{date:'2026-11-01',profile:JSON.stringify({expenditureMode:'estimated'})}],workouts,'2026-11-21'),0);
+});
+
+test('confirmed workouts add their seven-day average to daily targets and maintenance', () => {
   const start = '2026-11-01',
     end = '2026-11-14',
     current = '2026-11-06';
@@ -156,12 +173,13 @@ test('confirmed workouts add only to their day, keep other daily targets fixed a
     workouts,
     asOf: end
   });
-  assert.equal(budget.dailyCalories, 2100);
+  assert.equal(budget.dailyCalories, 1843);
   assert.equal(budget.exerciseCalories, 300);
-  assert.equal(budget.target, 7 * 1800 + 300);
-  assert.equal(budget.maintenance, 7 * 2000 + 300);
-  assert.equal(buildWeek({ date: current, goals, profile: p, meals: [], workouts, asOf: end }).dailyCalories, 2100);
-  assert.equal(buildWeek({ date: '2026-11-07', goals, profile: p, meals: [], workouts, asOf: end }).dailyCalories, 1800);
+  assert.equal(budget.exerciseAverageCalories, 43);
+  assert.equal(budget.target, 7 * 1800 + 2 * 43);
+  assert.equal(budget.maintenance, 7 * 2000 + 2 * 43);
+  assert.equal(buildWeek({ date: current, goals, profile: p, meals: [], workouts, asOf: end }).dailyCalories, 1843);
+  assert.equal(buildWeek({ date: '2026-11-07', goals, profile: p, meals: [], workouts, asOf: end }).dailyCalories, 1843);
   const history = buildHistory({
     start,
     end,
@@ -170,13 +188,13 @@ test('confirmed workouts add only to their day, keep other daily targets fixed a
     workouts,
     asOf: end
   });
-  assert.equal(history.days[5].maintenance.calories, 2300);
+  assert.equal(history.days[5].maintenance.calories, 2043);
   assert.equal(history.days[4].maintenance.calories, 2000);
-  assert.equal(history.days[5].target.calories, 2100);
+  assert.equal(history.days[5].target.calories, 1843);
   const rolling = rollingWeekProgress(history.days, end);
-  assert.equal(rolling.get('2026-11-08').maintenance, 7 * 2000 + 300);
-  assert.equal(rolling.get('2026-11-12').maintenance, 7 * 2000 + 300);
-  assert.equal(rolling.get('2026-11-13').maintenance, 7 * 2000);
+  assert.equal(rolling.get('2026-11-08').maintenance, 7 * 2000 + 3 * 43);
+  assert.equal(rolling.get('2026-11-12').maintenance, 7 * 2000 + 7 * 43);
+  assert.equal(rolling.get('2026-11-13').maintenance, 7 * 2000 + 6 * 43);
   const estimated = [{
     date: start,
     profile: JSON.stringify({
@@ -205,7 +223,7 @@ test('confirmed workouts add only to their day, keep other daily targets fixed a
     meals: spent,
     workouts,
     asOf: end
-  }).dailyCalories, 1800);
+  }).dailyCalories, 1843);
 });
 test('workouts are private, authorized, idempotent, confirmed explicitly, persisted and removable', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'foodtrack-workouts-'));
@@ -345,11 +363,11 @@ test('workouts are private, authorized, idempotent, confirmed explicitly, persis
       cookie: a.cookie
     });
     assert.equal(after.body.week.exerciseCalories, 252);
-    assert.equal(after.body.week.dailyCalories, before.body.week.dailyCalories + 252);
+    assert.equal(after.body.week.dailyCalories, before.body.week.dailyCalories + 36);
     const history = await req(`/api/history?days=7&end=${today()}`, {
       cookie: a.cookie
     });
-    assert.equal(history.body.days.at(-1).maintenance.calories, after.body.week.profile.expenditure + 252);
+    assert.equal(history.body.days.at(-1).maintenance.calories, after.body.week.profile.expenditure + 36);
     const changed = await req(`/api/workouts/${id}/confirm`, {
       method: 'PUT',
       cookie: a.cookie,

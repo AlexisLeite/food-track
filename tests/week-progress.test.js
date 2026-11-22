@@ -17,10 +17,10 @@ test('a workout changes expenditure and balance but never the red intake average
   const updated=buildHistory({...input,workouts:[{date:workoutDate,confirmed:true,calories:926}]});
   const before=rollingWeekProgress(original.days,end), after=rollingWeekProgress(updated.days,end);
   const workoutDay=updated.days.find(day=>day.date===workoutDate);
-  assert.equal(workoutDay.target.calories,2697);
-  assert.equal(workoutDay.maintenance.calories,3082);
+  assert.equal(workoutDay.target.calories,1903);
+  assert.equal(workoutDay.maintenance.calories,2288);
   assert.equal(after.get(end).consumed,before.get(end).consumed);
-  assert.equal(after.get(end).balance,before.get(end).balance-926);
+  assert.equal(after.get(end).balance,before.get(end).balance-132*(workoutDate===end?1:2));
   assert.equal(after.get(end).value,before.get(end).value);
   assert.equal(after.get(end).value,1800);
   for(const [date,point] of before)if(date<workoutDate)assert.deepEqual(after.get(date),point);

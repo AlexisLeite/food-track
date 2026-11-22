@@ -739,6 +739,8 @@ test('weekly totals use Sunday to Saturday and preserve daily goal changes', () 
     maintenance: null,
     exerciseCalories: 0,
     exerciseWeekCalories: 0,
+    exerciseAverageCalories: 0,
+    exerciseWeekAverageCalories: 0,
     consumedBeforeDate: 0,
     daysRemaining: 7,
     remaining: 14000,
