@@ -1,16 +1,19 @@
+import { startPeriodicFoodWorker } from './periodic-food.js';
 import { codexServer } from './codex-server.js';
 import { createApplication } from './app.js';
 import { startAudioArchiveWorker } from './audio-archive.js';
 import { resolve } from 'node:path';
-const { app, db, photoStorage, extractionQueue } = await createApplication();
+const { app, db, photoStorage, periodicFood, extractionQueue } = await createApplication();
 codexServer.start().catch(() => {}); // Background retries keep the app available during Codex outages.
 const stopAudioArchive = startAudioArchiveWorker(resolve(process.env.DATA_DIR || 'data'));
 const stopPhotos = photoStorage.start();
+const stopPeriodicFood = startPeriodicFoodWorker(periodicFood);
 const port = Number(process.env.PORT || 3086);
 const host = process.env.HOST || '127.0.0.1';
 const server = app.listen(port, host, () => console.log(`Foodtrack: http://${host}:${port}`));
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {
   stopAudioArchive();
   stopPhotos();
-  server.close(async () => { await extractionQueue.stop(); await codexServer.stop(); await db.close(); process.exit(0); });
+  const periodicFoodStopped = stopPeriodicFood();
+  server.close(async () => { await periodicFoodStopped; await extractionQueue.stop(); await codexServer.stop(); await db.close(); process.exit(0); });
 });

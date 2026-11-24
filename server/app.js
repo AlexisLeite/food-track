@@ -1,3 +1,5 @@
+import { createPeriodicFood } from './periodic-food.js';
+import { insertMealCopy, mealSnapshot } from './meal-copy.js';
 import { createExtractionQueue } from './extraction-queue.js';
 import { REQUEST_ERROR_MESSAGE } from '../public/errors.js';
 import { installUsageLimits } from './usage-limits.js';
@@ -45,6 +47,7 @@ export async function createApplication({
   await photoStorage.init();
   const db = database || (await openDatabase(databaseUrl));
   const order = db.dialect === 'postgresql' ? 'ordinal' : 'rowid';
+  const periodicFood = createPeriodicFood(db, photoStorage, order);
   const tokenStore = await installTokenUsage(db);
   const limits = await installUsageLimits(db);
   const extractionQueue = await createExtractionQueue(db, {
@@ -459,6 +462,7 @@ export async function createApplication({
       photoUrl: meal.photo ? `/api/meals/${meal.id}/photo` : null,
       description: meal.photo ? null : (await db.prepare('SELECT description FROM meal_descriptions WHERE meal_id=?').get(meal.id))?.description || '',
       selected: meal.selected ? JSON.parse(meal.selected) : null,
+      ...(meal.periodic_food_id ? { repeatsDaily: true } : {}),
       analyses,
       createdAt: meal.created_at
     };
@@ -587,28 +591,9 @@ export async function createApplication({
           photo = '';
         }
       }
-      const selected = JSON.parse(original.selected);
-      const analyses = await db.prepare(`SELECT * FROM analyses WHERE meal_id=? ORDER BY created_at, ${order}`).all(original.id);
-      const mapped = new Map(analyses.map(analysis => [analysis.id, randomUUID()]));
       await transaction(db, async () => {
-        await db.prepare('INSERT INTO meals(id,user_id,date,photo,selected,created_at) VALUES (?,?,?,?,?,?)').run(id, req.user.id, date, photo, null, new Date().toISOString());
-        const description = await db.prepare('SELECT description FROM meal_descriptions WHERE meal_id=?').get(original.id);
-        if (description) await db.prepare('INSERT INTO meal_descriptions VALUES (?,?)').run(id, description.description);
-        for (const analysis of analyses) {
-          await db.prepare('INSERT INTO analyses(id,meal_id,instructions,description,options,created_at) VALUES(?,?,?,?,?,?)').run(mapped.get(analysis.id), id, analysis.instructions, analysis.description, analysis.options, analysis.created_at);
-        }
-        if (mapped.has(selected.analysisId)) selected.analysisId = mapped.get(selected.analysisId);else {
-          const analysisId = randomUUID(),
-            option = {
-              ...selected
-            };
-          delete option.analysisId;
-          delete option.optionIndex;
-          await db.prepare('INSERT INTO analyses(id,meal_id,instructions,description,options,created_at) VALUES(?,?,?,?,?,?)').run(analysisId, id, '', description?.description || selected.name, JSON.stringify([option]), new Date().toISOString());
-          selected.analysisId = analysisId;
-          selected.optionIndex = 0;
-        }
-        await db.prepare('UPDATE meals SET selected=? WHERE id=?').run(JSON.stringify(selected), id);
+        const snapshot = await mealSnapshot(db, original, order);
+        await insertMealCopy(db, { id, userId: req.user.id, date, snapshot, photo });
       });
       committed = true;
       res.status(201).json({
@@ -618,6 +603,15 @@ export async function createApplication({
       if (photo && !committed) await photoStorage.remove(photo).catch(() => {});
       throw error;
     }
+  });
+  app.post('/api/meals/:id/periodic', async (req, res) => {
+    await periodicFood.enable(req.user.id, req.params.id);
+    res.json({ ok: true });
+  });
+  app.delete('/api/meals/:id/periodic', async (req, res) => {
+    await ownedMeal(req);
+    await periodicFood.disable(req.user.id, req.params.id);
+    res.json({ ok: true });
   });
   app.get('/api/meals/:id/photo', async (req, res) => {
     const meal = await ownedMeal(req);
@@ -827,6 +821,7 @@ export async function createApplication({
     app,
     db,
     photoStorage,
+    periodicFood,
     extractionQueue
   };
 }

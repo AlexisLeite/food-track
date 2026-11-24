@@ -23,6 +23,7 @@ async function isolatedDatabase() {
     await connection.query(`CREATE SCHEMA "${schema}"`);
     await connection.query(`SET search_path TO "${schema}"`);
     await connection.query(await readFile(new URL('../prisma/migrations/20261109213000_postgresql/migration.sql',import.meta.url),'utf8'));
+    await connection.query(await readFile(new URL('../prisma/migrations/20261124120000_periodic_food/migration.sql',import.meta.url),'utf8'));
   } finally { connection.release(); }
   const scoped = new URL(url); scoped.searchParams.set('schema',schema);
   return { url:scoped.toString(), async dispose() { await pool.query(`DROP SCHEMA "${schema}" CASCADE`); await pool.end(); } };
@@ -140,4 +141,81 @@ test('PostgreSQL app: login, profiles, parallel quotas, durable/retried jobs, re
     assert.equal((await request('/api/login',{method:'POST',body:{username:'alexis',password:'new-password-123'}})).status,200);
     assert.equal((await request('/api/me',{cookie:b.cookie})).status,200);
   } finally {if(server?.listening)await stop();await target.dispose();await rm(dir,{recursive:true,force:true});}
+});
+
+test('daily meals are copied once, survive source deletion and can cancel future copies', { skip: !url }, async () => {
+  const target = await isolatedDatabase();
+  const dir = await mkdtemp(join(tmpdir(), 'foodtrack-periodic-'));
+  let application, server;
+  try {
+    application = await createApplication({ dataDir: dir, databaseUrl: target.url });
+    const { db, app, periodicFood, photoStorage } = application;
+    server = app.listen(0, '127.0.0.1');
+    await new Promise(resolve => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const date = today();
+    const tomorrow = dateOffset(date, 1);
+    const option = { name: 'Tostada', portion: '2 rebanadas', calories: 210, protein: 6, fat: 4, carbs: 38, details: '' };
+    const dateCreated = new Date().toISOString();
+    const credentials = new Map();
+    for (const id of ['owner', 'other']) {
+      await db.prepare('INSERT INTO users(id,username,password) VALUES(?,?,?)').run(id, id, 'unused');
+      const token = randomBytes(32).toString('hex');
+      credentials.set(id, token);
+      await db.prepare('INSERT INTO sessions(token,user_id,expires) VALUES(?,?,?)')
+        .run(createHash('sha256').update(token).digest('hex'), id, Date.now() + 60_000);
+    }
+    const request = (path, method = 'GET', user = 'owner', body) => fetch(base + path, {
+      method,
+      headers: { Cookie: `foodtrack_session=${credentials.get(user)}`, 'X-Foodtrack': '1', 'Content-Type': 'application/json' },
+      body: body && JSON.stringify(body)
+    });
+    await photoStorage.write('source.jpg', Buffer.from('photo fixture'));
+    await db.prepare('INSERT INTO meals(id,user_id,date,photo,selected,created_at) VALUES(?,?,?,?,?,?)')
+      .run('source', 'owner', date, 'source.jpg', JSON.stringify({ ...option, analysisId: 'a', optionIndex: 0 }), dateCreated);
+    await db.prepare('INSERT INTO analyses(id,meal_id,instructions,description,options,created_at) VALUES(?,?,?,?,?,?)')
+      .run('a', 'source', '', 'Tostada', JSON.stringify([option, { ...option, calories: 250 }]), dateCreated);
+    const route = '/api/meals/source/periodic';
+    assert.equal((await request(route, 'POST', 'other')).status, 404);
+    for (const response of await Promise.all([request(route, 'POST'), request(route, 'POST')])) assert.equal(response.status, 200);
+    const readDay = async date => (await request(`/api/day?date=${date}`)).json();
+    assert.equal((await readDay(date)).meals.length, 1);
+    assert.equal((await request('/api/meals/source', 'DELETE')).status, 200);
+    await Promise.all([periodicFood.materialize(tomorrow), periodicFood.materialize(tomorrow)]);
+    const next = await readDay(tomorrow);
+    assert.equal(next.meals.length, 1);
+    assert.equal(next.total, 210);
+    const [copy] = next.meals;
+    assert.equal(copy.repeatsDaily, true);
+    assert.equal(await (await request(copy.photoUrl)).text(), 'photo fixture');
+    assert.equal((await request(`/api/meals/${copy.id}/selection`, 'PUT', 'owner', {
+      analysisId: copy.analyses[0].id, optionIndex: 1
+    })).status, 200);
+    assert.equal((await readDay(tomorrow)).total, 250);
+    const following = dateOffset(date, 2);
+    await periodicFood.materialize(following);
+    assert.equal((await readDay(following)).total, 210);
+    assert.equal((await request(`/api/meals/${copy.id}/periodic`, 'DELETE', 'other')).status, 404);
+    assert.equal((await request(`/api/meals/${copy.id}/periodic`, 'DELETE')).status, 200);
+    await periodicFood.materialize(dateOffset(date, 3));
+    assert.equal((await readDay(dateOffset(date, 3))).meals.length, 0);
+    assert.equal((await readDay(tomorrow)).meals[0].repeatsDaily, undefined);
+    assert.equal((await readDay(tomorrow)).total, 250);
+    assert.equal(await (await request(copy.photoUrl)).text(), 'photo fixture');
+
+    assert.equal((await request(`/api/meals/${copy.id}/periodic`, 'POST')).status, 200);
+    assert.equal((await readDay(date)).total, 250);
+    const history = await (await request(`/api/history?days=7&end=${date}`)).json();
+    assert.equal(history.days.at(-1).actual.calories, 250);
+    const [newCopy] = (await readDay(date)).meals;
+    assert.equal((await request(`/api/meals/${newCopy.id}`, 'DELETE')).status, 200);
+    await periodicFood.materialize(date);
+    assert.equal((await readDay(date)).meals.length, 0);
+  } finally {
+    if (server) await new Promise(resolve => server.close(resolve));
+    await application?.extractionQueue.stop();
+    await application?.db.close();
+    await target.dispose();
+    await rm(dir, { recursive: true, force: true });
+  }
 });

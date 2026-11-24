@@ -580,8 +580,8 @@ function optionMarkup(analysis, selected) {
     return `<button class="option ${chosen ? 'chosen' : ''}" data-analysis="${analysis.id}" data-option="${i}" aria-pressed="${chosen}" ${analysisBusy ? 'disabled' : ''}><span class="option-label"><strong>${esc(o.name)}</strong><small>${esc(o.portion)}</small><small class="option-macros">${macroText(o)}</small><small>${esc(o.details)}</small></span><span class="kcal">${fmt(o.calories)} kcal${chosen ? ' ✓' : ''}</span></button>`;
   }).join('')}</div>`;
 }
-function repeatMealActions() {
-  return `<div class="meal-actions"><div class="repeat-control"><button type="button" class="primary wide capture repeat-button" data-action="repeat-meal"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18M8 15h2M14 15h2"/></svg>Repetir comida</button><input type="date" id="repeat-date" aria-label="Fecha para repetir comida" tabindex="-1"></div><div class="repeat-confirmation" id="repeat-confirmation" hidden><p id="repeat-confirmation-label" aria-live="polite"></p><div><button type="button" class="primary" id="confirm-repeat">Confirmar</button><button type="button" id="cancel-repeat">Cancelar</button></div></div><button type="button" class="wide delete-meal-button" data-action="delete-meal">Eliminar comida</button></div>`;
+function repeatMealActions(meal) {
+  return `<div class="meal-actions"><div class="repeat-control"><button type="button" class="primary wide capture repeat-button" data-action="repeat-meal"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18M8 15h2M14 15h2"/></svg>Repetir comida</button><input type="date" id="repeat-date" aria-label="Fecha para repetir comida" tabindex="-1"></div><div class="repeat-confirmation" id="repeat-confirmation" hidden><p id="repeat-confirmation-label" aria-live="polite"></p><div><button type="button" class="primary" id="confirm-repeat">Confirmar</button><button type="button" id="cancel-repeat">Cancelar</button></div></div>${meal.selected ? `<button type="button" class="wide" data-action="${meal.repeatsDaily ? 'stop-periodic-meal' : 'start-periodic-meal'}">${meal.repeatsDaily ? 'Dejar de repetir' : 'Repetir desde hoy'}</button>` : ''}<button type="button" class="wide delete-meal-button" data-action="delete-meal">Eliminar comida</button></div>`;
 }
 function openMeal() {
   const m = activeMeal; if (!m) return;
@@ -591,7 +591,7 @@ function openMeal() {
     dialog.innerHTML = `${modalHeader('Analizar comida')}<div class="dialog-body">${processingMarkup(analysisSource)}</div>`;
     showModal(); return;
   }
-  dialog.innerHTML = `${modalHeader(m.selected ? 'Editar comida' : 'Elegir comida')}<div class="dialog-body">${m.selected && !hasMacros(m.selected) ? '<p class="description">La opción elegida no tiene macros. Reevaluá la comida y elegí una nueva opción para completarlos.</p>' : ''}${m.photoUrl ? `<img class="meal-photo" src="${m.photoUrl}" alt="Foto de tu comida">` : `<p class="description">${esc(m.description)}</p>`}${latest ? `<p class="description">${esc(latest.description)}</p>${repeatMealActions()}${optionMarkup(latest, m.selected)}${!latest.options.length ? '<p class="description">Añadí detalles para ajustar el análisis.</p>' : '<small>Elegí una opción para guardar sus calorías. Son estimaciones.</small>'}` : `<p class="description">La comida está guardada. Analizala para recibir opciones.</p>${repeatMealActions()}`}${m.analyses.length > 1 ? `<details class="history"><summary>Opciones anteriores</summary>${m.analyses.slice(1).map(a => `<p class="hint">${esc(a.instructions || 'Análisis inicial')}</p>${optionMarkup(a, m.selected)}`).join('')}</details>` : ''}<form id="reevaluate" class="reevaluate"><p class="description">${latest ? '¿Querés ajustar el análisis?' : 'Detalles de la comida (opcional)'}</p>${voice.button()}</form></div>`;
+  dialog.innerHTML = `${modalHeader(m.selected ? 'Editar comida' : 'Elegir comida')}<div class="dialog-body">${m.selected && !hasMacros(m.selected) ? '<p class="description">La opción elegida no tiene macros. Reevaluá la comida y elegí una nueva opción para completarlos.</p>' : ''}${m.photoUrl ? `<img class="meal-photo" src="${m.photoUrl}" alt="Foto de tu comida">` : `<p class="description">${esc(m.description)}</p>`}${latest ? `<p class="description">${esc(latest.description)}</p>${repeatMealActions(m)}${optionMarkup(latest, m.selected)}${!latest.options.length ? '<p class="description">Añadí detalles para ajustar el análisis.</p>' : '<small>Elegí una opción para guardar sus calorías. Son estimaciones.</small>'}` : `<p class="description">La comida está guardada. Analizala para recibir opciones.</p>${repeatMealActions(m)}`}${m.analyses.length > 1 ? `<details class="history"><summary>Opciones anteriores</summary>${m.analyses.slice(1).map(a => `<p class="hint">${esc(a.instructions || 'Análisis inicial')}</p>${optionMarkup(a, m.selected)}`).join('')}</details>` : ''}<form id="reevaluate" class="reevaluate"><p class="description">${latest ? '¿Querés ajustar el análisis?' : 'Detalles de la comida (opcional)'}</p>${voice.button()}</form></div>`;
   showModal();
   voice.bind(document.querySelector('#reevaluate'),
     (text, source) => submitFood({ kind: 'reevaluate', mealId: m.id, date: m.date, text, source }),
@@ -669,6 +669,22 @@ document.addEventListener('click', async e => {
           if (typeof picker.showPicker === 'function') picker.showPicker();
           else { picker.focus({ preventScroll: true }); picker.click(); }
         } catch { picker.focus({ preventScroll: true }); picker.click(); }
+        break;
+      }
+      case 'start-periodic-meal':
+      case 'stop-periodic-meal': {
+        const meal = activeMeal, identity = user?.id;
+        if (!meal?.selected) break;
+        const start = button.dataset.action === 'start-periodic-meal';
+        if (!confirm(start ? '¿Querés registrar esta comida todos los días desde hoy?' : '¿Querés dejar de repetir esta comida? Las comidas ya registradas se conservan.')) break;
+        button.disabled = true;
+        try {
+          await api(`/api/meals/${meal.id}/periodic`, { method: start ? 'POST' : 'DELETE' });
+          if (user?.id !== identity) break;
+          if (activeMeal?.id === meal.id && dialog.open) closeModal();
+          toast(start ? 'La comida se repetirá desde hoy' : 'La comida dejó de repetirse');
+          if (view === 'day') await loadDay();
+        } finally { button.disabled = false; }
         break;
       }
       case 'photo': document.querySelector('#photo-input').click(); break;

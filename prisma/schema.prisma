@@ -15,6 +15,7 @@ model users {
   theme                        String                @default("dark")
   sessions_relation            sessions[]
   meals_relation               meals[]
+  periodic_food_relation       PeriodicFood[]
   profile_goals_relation       profile_goals[]
   submission_receipts_relation submission_receipts[]
   profile_versions_relation    profile_versions[]
@@ -44,8 +45,25 @@ model meals {
   users_relation             users              @relation(fields: [user_id], references: [id], onDelete: Cascade)
   analyses_relation          analyses[]
   meal_descriptions_relation meal_descriptions?
+  periodic_food_id           String?
+  periodic_food_relation     PeriodicFood? @relation(fields: [periodic_food_id], references: [id], onDelete: SetNull)
 
   @@index([user_id, date])
+  @@index([periodic_food_id])
+}
+
+model PeriodicFood {
+  id             String  @id
+  user_id        String
+  source_meal_id String
+  snapshot       String
+  next_date      String
+  user           users   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  meals          meals[]
+
+  @@unique([user_id, source_meal_id])
+  @@index([next_date])
+  @@map("periodic_food")
 }
 
 model analyses {
