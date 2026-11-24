@@ -1,0 +1,15 @@
+{
+  "id": "/",
+  "name": "Comida",
+  "short_name": "Comida",
+  "lang": "es-UY",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#161616",
+  "background_color": "#161616",
+  "icons": [
+    { "src": "/icons/comida-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/comida-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
