@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "Comida",
+    "slug": "foodtrack-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "platforms": ["ios", "android"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "uy.gim.comida",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Comida usa la cámara para registrar fotos de tus comidas.",
+        "NSMicrophoneUsageDescription": "Comida usa el micrófono para describir comidas y enviar mensajes de voz.",
+        "NSPhotoLibraryUsageDescription": "Comida permite seleccionar fotos para registrar tus comidas.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "uy.gim.comida",
+      "permissions": ["android.permission.CAMERA", "android.permission.RECORD_AUDIO"],
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}
